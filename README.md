@@ -38,12 +38,21 @@ Built with React, Node.js, PostgreSQL, and real football data.
    ```bash
    git clone https://github.com/your-username/premier-bets.git\
 
+   npm init -y
+   npm install express cors dotenv @supabase/supabase-js
+
 
 
 ## Current Notes
 
-Just finished:
-- Finished creatingmatch_history table in supabase
+Finished:
+1. Created match_history table in supabase
+2. Installed Dependancies
+3. Setup .env file with URL, Key, and Port
+4. Created supabaseClient.js to connect supabase to server.js
+5. Created server.js and started a simple express.js server
+
+
 
 Next to do:
 1. Set Up Backend First (Node + Express + Supabase connection)
