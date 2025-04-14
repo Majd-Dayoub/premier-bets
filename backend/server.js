@@ -71,9 +71,9 @@ app.get("/api/fetch-matches", async (req, res) => {
 });
 
 
-app.get("/api/fetch-headtohead", async (req, res) => {
+app.get("/api/fetch-standings", async (req, res) => {
   try {
-    const matchId = req.query.matchId;
+    const matchId = req.query.matchId; // Still passed, because you need to know which two teams to compare
 
     if (!matchId) {
       return res.status(400).json({ error: "Missing matchId query parameter." });
@@ -86,98 +86,86 @@ app.get("/api/fetch-headtohead", async (req, res) => {
 
     const clickedMatch = matchResponse.data;
 
-    const originalHomeTeamId = clickedMatch.homeTeam.id;
-    const originalAwayTeamId = clickedMatch.awayTeam.id;
+    const homeTeamId = clickedMatch.homeTeam.id;
+    const awayTeamId = clickedMatch.awayTeam.id;
 
-    // 2️⃣ Now fetch the full head-to-head history
-    const headToHeadResponse = await axios.get(`https://api.football-data.org/v4/matches/${matchId}/head2head`, {
+    // 2️⃣ Fetch the full Premier League standings
+    const standingsResponse = await axios.get("https://api.football-data.org/v4/competitions/PL/standings", {
       headers,
-      params: {
-        limit: 50,
+    });
+
+    const standings = standingsResponse.data.standings[0].table; // standings[0] = full league table
+
+    // 3️⃣ Find the stats for each team
+    const homeTeamStats = standings.find(team => team.team.id === homeTeamId);
+    const awayTeamStats = standings.find(team => team.team.id === awayTeamId);
+
+    if (!homeTeamStats || !awayTeamStats) {
+      return res.status(404).json({ error: "Could not find team stats in standings." });
+    }
+
+    // 4️⃣ Calculate weighted team strength
+    const homeStrength = calculateTeamStrength(homeTeamStats);
+    const awayStrength = calculateTeamStrength(awayTeamStats);
+
+    // 5️⃣ Calculate win probabilities
+    const homeWinChance = homeStrength / (homeStrength + awayStrength);
+    const awayWinChance = awayStrength / (homeStrength + awayStrength);
+    const drawChance = 1 - (homeWinChance + awayWinChance); // Simple draw model (can adjust later)
+
+    res.json({
+      homeTeam: {
+        id: homeTeamStats.team.id,
+        name: homeTeamStats.team.name,
+        crest: homeTeamStats.team.crest,
+      },
+      awayTeam: {
+        id: awayTeamStats.team.id,
+        name: awayTeamStats.team.name,
+        crest: awayTeamStats.team.crest,
+      },
+      odds: {
+        homeWin: homeWinChance.toFixed(2),
+        draw: drawChance.toFixed(2),
+        awayWin: awayWinChance.toFixed(2),
       }
     });
 
-    const data = headToHeadResponse.data;
-    const matches = data.matches;
-
-    // ✅ Correctly calculate aggregates with passed team IDs
-    const aggregates = calculateAggregates(matches, originalHomeTeamId, originalAwayTeamId);
-
-    // ✅ Clean matches
-    const cleanedMatches = matches.map(match => ({
-      id: match.id,
-      date: match.utcDate,
-      homeTeam: {
-        id: match.homeTeam.id,
-        name: match.homeTeam.name,
-        crest: match.homeTeam.crest,
-      },
-      awayTeam: {
-        id: match.awayTeam.id,
-        name: match.awayTeam.name,
-        crest: match.awayTeam.crest,
-      },
-      fullTimeScore: {
-        home: match.score.fullTime.home,
-        away: match.score.fullTime.away,
-      },
-      winner: match.score.winner,
-    }));
-
-    res.json({
-      aggregates,
-      matches: cleanedMatches,
-    });
-
   } catch (err) {
-    console.error("Error fetching head-to-head:", err.message);
-    res.status(500).json({ error: "Failed to fetch head-to-head from Football-Data.org" });
+    console.error("Error fetching standings:", err.message);
+    res.status(500).json({ error: "Failed to fetch standings or match details." });
   }
 });
 
 
-function calculateAggregates(matches, originalHomeTeamId, originalAwayTeamId) {
-  let homeTeamWins = 0;
-  let awayTeamWins = 0;
-  let draws = 0;
-  let totalGoals = 0;
+function calculateTeamStrength(teamStats) {
+  const pointsWeight = 0.5;
+  const goalDiffWeight = 0.2;
+  const winRateWeight = 0.2;
+  const formWeight = 0.1;
 
-  for (const match of matches) {
-    const winner = match.score?.winner;
-    const matchHomeTeamId = match.homeTeam?.id;
-    const matchAwayTeamId = match.awayTeam?.id;
-    const homeGoals = match.score?.fullTime?.home || 0;
-    const awayGoals = match.score?.fullTime?.away || 0;
+  const playedGames = teamStats.playedGames || 1; // avoid division by zero
+  const winRate = teamStats.won / playedGames;
 
-    totalGoals += homeGoals + awayGoals;
+  // Calculate recent form points
+  const formArray = teamStats.form ? teamStats.form.split(",") : [];
+  const formPoints = formArray.reduce((sum, result) => {
+    if (result === "W") return sum + 3;
+    if (result === "D") return sum + 1;
+    return sum;
+  }, 0);
+  const formScore = formPoints / (formArray.length * 3 || 1); // Normalize to 0-1 scale
 
-    if (winner === "DRAW") {
-      draws++;
-    } else if (winner === "HOME_TEAM") {
-      // ✅ Home team won → who was home?
-      if (matchHomeTeamId === originalHomeTeamId) {
-        homeTeamWins++;
-      } else if (matchHomeTeamId === originalAwayTeamId) {
-        awayTeamWins++;
-      }
-    } else if (winner === "AWAY_TEAM") {
-      // ✅ Away team won → who was away?
-      if (matchAwayTeamId === originalHomeTeamId) {
-        homeTeamWins++;
-      } else if (matchAwayTeamId === originalAwayTeamId) {
-        awayTeamWins++;
-      }
-    }
-  }
+  // Weighted strength score
+  const strength =
+    (teamStats.points * pointsWeight) +
+    (teamStats.goalDifference * goalDiffWeight) +
+    (winRate * 100 * winRateWeight) +
+    (formScore * 100 * formWeight);
 
-  return {
-    numberOfMatches: matches.length,
-    totalGoals,
-    homeTeamWins,
-    awayTeamWins,
-    draws,
-  };
+  return strength;
 }
+
 
 
 const PORT = process.env.PORT || 5000;
