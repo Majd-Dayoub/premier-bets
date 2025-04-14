@@ -4,6 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import supabase from "./supabaseClient.js";
 import axios from "axios";
+import dayjs from "dayjs";
 
 // Configure dotenv
 dotenv.config();
@@ -20,96 +21,163 @@ app.get("/", (req, res) => {
   res.send("Backend is working!");
 });
 
-app.get("/api/status", async (req, res) => {
+// ✅ Football-Data.org uses 'X-Auth-Token' as the header key
+const headers = {
+  "X-Auth-Token": process.env.FOOTBALL_DATA_API_KEY, // Your Football-Data.org API key
+};
+
+// Fetch Fixtures 
+app.get("/api/fetch-matches", async (req, res) => {
   try {
-    const response = await axios.get("https://v3.football.api-sports.io/status", {
+    const today = dayjs().format("YYYY-MM-DD"); // Today's date in API format
+    const twoWeeksLater = dayjs().add(14, 'day').format("YYYY-MM-DD"); // Two weeks later
+    const response = await axios.get("https://api.football-data.org/v4/competitions/PL/matches", {
       headers: {
-        "x-apisports-key": process.env.FOOTBALL_API_KEY,
+        "X-Auth-Token": process.env.FOOTBALL_DATA_API_KEY,
       },
+      params: {
+        status: "SCHEDULED",
+        dateFrom: today,
+        dateTo: twoWeeksLater,
+      }
     });
 
-    console.log(response.data); // ✅ Log the full API response
+    // ✅ Clean up the matches before sending to frontend
+    const cleanedMatches = response.data.matches.map(match => ({
+      id: match.id,
+      date: match.utcDate,
+      homeTeam: {
+        id: match.homeTeam.id,
+        name: match.homeTeam.name,
+        tla: match.homeTeam.tla,
+        crest: match.homeTeam.crest,
+      },
+      awayTeam: {
+        id: match.awayTeam.id,
+        name: match.awayTeam.name,
+        tla: match.awayTeam.tla,
+        crest: match.awayTeam.crest,
+      },
+    }));
 
-    res.json(response.data);    // ✅ Send it back to frontend/postman
+
+    console.log(cleanedMatches); // ✅ See the cleaned matches
+
+    res.json(cleanedMatches);    // ✅ Send clean matches to frontend/postman
   } catch (err) {
     console.error(err.message);
-    res.status(500).json({ error: "Failed to fetch status from API-Football" });
+    res.status(500).json({ error: "Failed to fetch matches from Football-Data.org" });
   }
 });
 
 
-
-//api/predict
-app.get("/api/predict/", async (req, res) => {
-  const matchLimit = req.query.limit;
-  req.body = { "home_team": "Arsenal", "away_team": "Manchester City" }
-  const { home_team, away_team } = req.body;
-  const { data, error } = await supabase
-    .from("match_history")
-    .select("*")
-    .limit(4000);
-  let slicedData = data.slice(0, matchLimit);
-  console.log(req.body)
-  console.log(home_team);
-  res.json(slicedData);
-});
-
-app.post("/api/predict", async (req, res) => {
-  const { home_team, away_team } = req.body;
-  console.log(req.body)
-
-  if (!home_team || !away_team) {
-    return res.status(400).json({ error: "home_team and away_team are required" });
-  }
-
+app.get("/api/fetch-headtohead", async (req, res) => {
   try {
-    // Step 1: Fetch head-to-head matches from Supabase
-    const { data: matches, error } = await supabase
-      .from("match_history")
-      .select("*")
-      .or(
-        `and(home_team.eq.${home_team},away_team.eq.${away_team}),and(home_team.eq.${away_team},away_team.eq.${home_team})`
-      );
+    const matchId = req.query.matchId;
 
-    if (error) {
-      console.error(error.message);
-      return res.status(500).json({ error: "Error fetching matches" });
+    if (!matchId) {
+      return res.status(400).json({ error: "Missing matchId query parameter." });
     }
 
-    console.log("Fetched Matches:", matches); // ✅ Just console.log for now
+    // 1️⃣ First, fetch the details of the match the user clicked
+    const matchResponse = await axios.get(`https://api.football-data.org/v4/matches/${matchId}`, {
+      headers,
+    });
 
-    // No calculation yet. Just return a dummy success for now
-    res.json({ message: "Matches fetched successfully (check server console)" });
+    const clickedMatch = matchResponse.data;
+
+    const originalHomeTeamId = clickedMatch.homeTeam.id;
+    const originalAwayTeamId = clickedMatch.awayTeam.id;
+
+    // 2️⃣ Now fetch the full head-to-head history
+    const headToHeadResponse = await axios.get(`https://api.football-data.org/v4/matches/${matchId}/head2head`, {
+      headers,
+      params: {
+        limit: 50,
+      }
+    });
+
+    const data = headToHeadResponse.data;
+    const matches = data.matches;
+
+    // ✅ Correctly calculate aggregates with passed team IDs
+    const aggregates = calculateAggregates(matches, originalHomeTeamId, originalAwayTeamId);
+
+    // ✅ Clean matches
+    const cleanedMatches = matches.map(match => ({
+      id: match.id,
+      date: match.utcDate,
+      homeTeam: {
+        id: match.homeTeam.id,
+        name: match.homeTeam.name,
+        crest: match.homeTeam.crest,
+      },
+      awayTeam: {
+        id: match.awayTeam.id,
+        name: match.awayTeam.name,
+        crest: match.awayTeam.crest,
+      },
+      fullTimeScore: {
+        home: match.score.fullTime.home,
+        away: match.score.fullTime.away,
+      },
+      winner: match.score.winner,
+    }));
+
+    res.json({
+      aggregates,
+      matches: cleanedMatches,
+    });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("Error fetching head-to-head:", err.message);
+    res.status(500).json({ error: "Failed to fetch head-to-head from Football-Data.org" });
   }
 });
 
 
-// Test Supabase connection on startup
-async function testSupabaseConnection() {
-  try {
-    const { data, error } = await supabase
-      .from("match_history")
-      .select("*")
-      .limit(1);
+function calculateAggregates(matches, originalHomeTeamId, originalAwayTeamId) {
+  let homeTeamWins = 0;
+  let awayTeamWins = 0;
+  let draws = 0;
+  let totalGoals = 0;
 
-    if (error) {
-      console.error("❌ Supabase connection failed:", error.message);
-    } else if (data.length === 0) {
-      console.warn("⚠️ Connected to Supabase, but match_history table is empty.");
-    } else {
-      console.log("✅ Supabase connection successful!");
-      console.log("Sample row:", data[0]);
+  for (const match of matches) {
+    const winner = match.score?.winner;
+    const matchHomeTeamId = match.homeTeam?.id;
+    const matchAwayTeamId = match.awayTeam?.id;
+    const homeGoals = match.score?.fullTime?.home || 0;
+    const awayGoals = match.score?.fullTime?.away || 0;
+
+    totalGoals += homeGoals + awayGoals;
+
+    if (winner === "DRAW") {
+      draws++;
+    } else if (winner === "HOME_TEAM") {
+      // ✅ Home team won → who was home?
+      if (matchHomeTeamId === originalHomeTeamId) {
+        homeTeamWins++;
+      } else if (matchHomeTeamId === originalAwayTeamId) {
+        awayTeamWins++;
+      }
+    } else if (winner === "AWAY_TEAM") {
+      // ✅ Away team won → who was away?
+      if (matchAwayTeamId === originalHomeTeamId) {
+        homeTeamWins++;
+      } else if (matchAwayTeamId === originalAwayTeamId) {
+        awayTeamWins++;
+      }
     }
-  } catch (err) {
-    console.error("❌ Error testing Supabase connection:", err);
   }
+
+  return {
+    numberOfMatches: matches.length,
+    totalGoals,
+    homeTeamWins,
+    awayTeamWins,
+    draws,
+  };
 }
-
-testSupabaseConnection();
 
 
 const PORT = process.env.PORT || 5000;
