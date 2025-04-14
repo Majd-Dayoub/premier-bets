@@ -71,32 +71,32 @@ app.get("/api/fetch-matches", async (req, res) => {
 });
 
 
+
+
 app.get("/api/fetch-standings", async (req, res) => {
   try {
-    const matchId = req.query.matchId; // Still passed, because you need to know which two teams to compare
+    const matchId = req.query.matchId;
 
     if (!matchId) {
       return res.status(400).json({ error: "Missing matchId query parameter." });
     }
 
-    // 1️⃣ First, fetch the details of the match the user clicked
+    // 1️⃣ Fetch match details
     const matchResponse = await axios.get(`https://api.football-data.org/v4/matches/${matchId}`, {
       headers,
     });
-
     const clickedMatch = matchResponse.data;
 
     const homeTeamId = clickedMatch.homeTeam.id;
     const awayTeamId = clickedMatch.awayTeam.id;
 
-    // 2️⃣ Fetch the full Premier League standings
+    // 2️⃣ Fetch standings
     const standingsResponse = await axios.get("https://api.football-data.org/v4/competitions/PL/standings", {
       headers,
     });
+    const standings = standingsResponse.data.standings[0].table;
 
-    const standings = standingsResponse.data.standings[0].table; // standings[0] = full league table
-
-    // 3️⃣ Find the stats for each team
+    // 3️⃣ Find both teams
     const homeTeamStats = standings.find(team => team.team.id === homeTeamId);
     const awayTeamStats = standings.find(team => team.team.id === awayTeamId);
 
@@ -104,15 +104,14 @@ app.get("/api/fetch-standings", async (req, res) => {
       return res.status(404).json({ error: "Could not find team stats in standings." });
     }
 
-    // 4️⃣ Calculate weighted team strength
+    // 4️⃣ Calculate strengths
     const homeStrength = calculateTeamStrength(homeTeamStats);
     const awayStrength = calculateTeamStrength(awayTeamStats);
 
-    // 5️⃣ Calculate win probabilities
-    const homeWinChance = homeStrength / (homeStrength + awayStrength);
-    const awayWinChance = awayStrength / (homeStrength + awayStrength);
-    const drawChance = 1 - (homeWinChance + awayWinChance); // Simple draw model (can adjust later)
+    // 5️⃣ Calculate betting odds
+    const odds = calculateBettingOdds(homeStrength, awayStrength);
 
+    // 6️⃣ Respond
     res.json({
       homeTeam: {
         id: homeTeamStats.team.id,
@@ -135,9 +134,9 @@ app.get("/api/fetch-standings", async (req, res) => {
         lost: awayTeamStats.lost,
       },
       odds: {
-        homeWin: homeWinChance.toFixed(2),
-        draw: drawChance.toFixed(2),
-        awayWin: awayWinChance.toFixed(2),
+        homeWin: odds.homeWinOdds,
+        draw: odds.drawOdds,
+        awayWin: odds.awayWinOdds,
       }
     });
 
@@ -176,6 +175,30 @@ function calculateTeamStrength(teamStats) {
   return strength;
 }
 
+
+function calculateBettingOdds(homeStrength, awayStrength, drawFactor = 0.25) {
+  const totalStrength = homeStrength + awayStrength;
+
+  // Basic probabilities
+  let homeWinProb = homeStrength / totalStrength;
+  let awayWinProb = awayStrength / totalStrength;
+
+  // Reduce win probabilities to make space for draw chance
+  homeWinProb *= (1 - drawFactor);
+  awayWinProb *= (1 - drawFactor);
+  const drawProb = drawFactor; // fixed draw probability slice
+
+  // Odds are just the inverse
+  const homeWinOdds = (1 / homeWinProb).toFixed(2);
+  const drawOdds = (1 / drawProb).toFixed(2);
+  const awayWinOdds = (1 / awayWinProb).toFixed(2);
+
+  return {
+    homeWinOdds: parseFloat(homeWinOdds),
+    drawOdds: parseFloat(drawOdds),
+    awayWinOdds: parseFloat(awayWinOdds)
+  };
+}
 
 
 const PORT = process.env.PORT || 5000;
