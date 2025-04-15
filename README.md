@@ -51,12 +51,15 @@ Finished:
 3. Setup .env file with URL, Key, and Port
 4. Created supabaseClient.js to connect supabase to server.js
 5. Created server.js and started a simple express.js server
-6. Added Football API and used Axios to test get request
+6. Added Football API and used Axios to make requests
+7. Calculated Betting Odds based on standings data for both teams
+8. Created users and bets tables
+9. Finished create-user, get-user, and place-bet
+
 
 
 
 Next to do:
-1. Set Up Backend First (Node + Express + Supabase connection)
 2. Set Up Frontend Project (React + Tailwind)
 3. Build Real /predict Backend Logic (connect to Supabase match_history)
 4. Connect Frontend to Backend (Call /predict endpoint)
