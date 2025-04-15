@@ -55,15 +55,31 @@ Finished:
 7. Calculated Betting Odds based on standings data for both teams
 8. Created users and bets tables
 9. Finished create-user, get-user, and place-bet
+10. Setup vite and tailwind css
+11. Created logo with canva
+12. connected backend and frontend 
+13. Create homepage which shows upcoming matches for 2 weeks
 
 
 
 
 Next to do:
-2. Set Up Frontend Project (React + Tailwind)
-3. Build Real /predict Backend Logic (connect to Supabase match_history)
-4. Connect Frontend to Backend (Call /predict endpoint)
+1. MatchCard.jsx Component
+2.BetModal.jsx (or BetDrawer)
+This pops up when a user wants to place a bet.
 
+Inside the modal:
+
+Show home vs away
+
+Show odds (or placeholder)
+
+Input for amount
+
+"Place Bet" button
+3. Link buttons to hit backend
+4. show success feedback
+5. Update user balance
 
 
 
