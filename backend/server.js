@@ -30,15 +30,14 @@ const headers = {
 // Fetch Fixtures 
 app.get("/api/fetch-matches", async (req, res) => {
   try {
-    const today = dayjs().format("YYYY-MM-DD"); // Today's date in API format
+    const yesterday = dayjs().subtract(1, 'day').format("YYYY-MM-DD"); // Yesterday's date in API format
     const twoWeeksLater = dayjs().add(14, 'day').format("YYYY-MM-DD"); // Two weeks later
     const response = await axios.get("https://api.football-data.org/v4/competitions/PL/matches", {
       headers: {
         "X-Auth-Token": process.env.FOOTBALL_DATA_API_KEY,
       },
       params: {
-        status: "SCHEDULED",
-        dateFrom: today,
+        dateFrom: yesterday,
         dateTo: twoWeeksLater,
       }
     });
@@ -60,9 +59,6 @@ app.get("/api/fetch-matches", async (req, res) => {
         crest: match.awayTeam.crest,
       },
     }));
-
-
-    console.log(cleanedMatches); // ✅ See the cleaned matches
 
     res.json(cleanedMatches);    // ✅ Send clean matches to frontend/postman
   } catch (err) {

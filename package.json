@@ -1,0 +1,10 @@
+{
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "scripts": {
+  "dev": "concurrently \"npm run client\" \"npm run server\"",
+  "client": "npm run dev --prefix frontend",
+  "server": "npm run dev --prefix backend"
+}
+}

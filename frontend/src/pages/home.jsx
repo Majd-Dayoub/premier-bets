@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import api from "../services/api";
+import MatchCard from "../components/MatchCard";
+import NavBar from "../components/NavBar";
 
 function Home() {
   const [matches, setMatches] = useState([]);
@@ -19,19 +21,21 @@ function Home() {
 
   return (
     <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">Upcoming Matches</h1>
-      <ul className="space-y-4">
-        {matches.map(match => (
-          <li key={match.id} className="bg-white shadow p-4 rounded">
-            <div className="flex justify-between items-center">
-              <span>{match.homeTeam.name}</span>
-              <span className="text-gray-500">vs<span>{match.date}</span></span>
-              <span>{match.awayTeam.name}</span>
-              
-            </div>
-          </li>
-        ))}
-      </ul>
+      <div className="flex flex-col min-h-screen bg-gray-100">
+      <NavBar />
+
+        <div className="flex-grow bg-gray-50 p-4">
+          <h1 className="text-2xl font-bold mb-4">Upcoming Matches</h1>
+
+          <ul className="space-y-4">
+            {matches.map((match) => (
+              <li key={match.id} className="bg-white shadow p-4 rounded">
+                <MatchCard match={match} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
     </div>
   );
 }
