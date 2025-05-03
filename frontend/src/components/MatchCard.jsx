@@ -3,7 +3,7 @@ import dayjs from "dayjs";
 
 function MatchCard({ match }) {
   return (
-    <div className="bg-white shadow-md rounded-xl px-4 py-5 transition-shadow hover:cursor-pointer hover:bg-green-300 min-h-[140px] w-[350px]">
+    <div className="bg-white shadow-md rounded-xl px-4 py-5 transition-shadow hover:cursor-pointer hover:bg-green-300 ">
       <div className="flex justify-between items-center text-center">
         {/* Home Team */}
         <div className="flex flex-col items-center w-1/3">
