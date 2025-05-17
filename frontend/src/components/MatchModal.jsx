@@ -2,6 +2,7 @@ import React from "react";
 import dayjs from "dayjs";
 
 function MatchModal({ match, onClose }) {
+ 
   if (!match) return null;
 
   return (
@@ -25,7 +26,9 @@ function MatchModal({ match, onClose }) {
               alt={match.homeTeam.name}
               className="w-14 h-14 object-contain mb-2"
             />
-            <span className="font-semibold text-sm text-gray-800">{match.homeTeam.name}</span>
+            <span className="font-semibold text-sm text-gray-800">
+              {match.homeTeam.name}
+            </span>
           </div>
 
           {/* VS and Time */}
@@ -43,8 +46,25 @@ function MatchModal({ match, onClose }) {
               alt={match.awayTeam.name}
               className="w-14 h-14 object-contain mb-2"
             />
-            <span className="font-semibold text-sm text-gray-800">{match.awayTeam.name}</span>
+            <span className="font-semibold text-sm text-gray-800">
+              {match.awayTeam.name}
+            </span>
           </div>
+        </div>
+
+        <div className="p-4 border rounded-lg bg-gray-50">
+          <h3 className="font-bold mb-2">Odds Test</h3>
+          <div className="space-y-2">
+            <p>Home Win: {match?.odds?.homeWin || "No odds data"}</p>
+            <p>Draw: {match?.odds?.draw || "No odds data"}</p>
+            <p>Away Win: {match?.odds?.awayWin || "No odds data"}</p>
+          </div>
+          <button
+            onClick={() => console.log("Full match data:", match)}
+            className="mt-3 px-3 py-1 bg-blue-100 text-blue-800 rounded text-sm"
+          >
+            Log Match Data
+          </button>
         </div>
       </div>
     </div>
