@@ -197,67 +197,6 @@ function calculateBettingOdds(homeStrength, awayStrength, drawFactor = 0.25) {
   };
 }
 
-// Create a new user in Supabase
-app.post("/api/create-user", async (req, res) => {
-  const { username } = req.body;
-
-  if (!username) {
-    return res.status(400).json({ error: "Username is required." });
-  }
-
-  const newUser = {
-    id: uuidv4(),
-    username,
-    balance: 5000, // starting balance
-    bets_placed: 0,
-    profit: 0,
-    wins: 0,
-    losses: 0,
-  };
-
-  try {
-    const { error } = await supabase.from("users").insert(newUser);
-
-    if (error) {
-      console.error("❌ Error creating user:", error.message);
-      return res.status(500).json({ error: "Failed to create user." });
-    }
-
-    res.status(201).json(newUser);
-  } catch (err) {
-    console.error("❌ Server error:", err.message);
-    res.status(500).json({ error: "Server error creating user." });
-  }
-});
-
-// Get user from Supabase
-///api/get-user?userId=abc-123
-app.get("/api/get-user", async (req, res) => {
-  const { userId } = req.query;
-
-  if (!userId) {
-    return res.status(400).json({ error: "Missing userId query parameter." });
-  }
-
-  try {
-    const { data, error } = await supabase
-      .from("users")
-      .select("*")
-      .eq("id", userId)
-      .single();
-
-    if (error || !data) {
-      console.error("❌ User not found:", error?.message || "No data");
-      return res.status(404).json({ error: "User not found." });
-    }
-
-    res.json(data);
-  } catch (err) {
-    console.error("❌ Server error:", err.message);
-    res.status(500).json({ error: "Error fetching user." });
-  }
-});
-
 app.post("/api/place-bet", async (req, res) => {
   const {
     userId,
