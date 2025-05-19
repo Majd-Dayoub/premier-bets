@@ -59,22 +59,18 @@ Finished:
 11. Created logo with canva
 12. connected backend and frontend 
 13. Create homepage which shows upcoming matches for 2 weeks
+14. Added UI for betting modal and connected backend APIs to show betting odds
+15. Created User Authentication System
 
 
 
 
 Next to do:
-1. MatchCard.jsx Component
-2.BetModal.jsx (or BetDrawer)
-This pops up when a user wants to place a bet.
+ 1. User Authentication System
+2. Balance and Wallet System
+3. Betting Logic + Slip Placement
 
-Inside the modal:
 
-Show home vs away
-
-Show odds (or placeholder)
-
-Input for amount
 
 "Place Bet" button
 3. Link buttons to hit backend

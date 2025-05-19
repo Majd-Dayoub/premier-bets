@@ -1,67 +1,151 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import dayjs from "dayjs";
+import api from "../services/api";
 
 function MatchModal({ match, onClose }) {
- 
+  const [extraData, setExtraData] = useState(null);
+  const [selectedBet, setSelectedBet] = useState(null);
+
+  useEffect(() => {
+    const fetchDetails = async () => {
+      try {
+        const res = await api.get("/fetch-standings", {
+          params: { matchId: match.id },
+        });
+        setExtraData(res.data);
+      } catch (err) {
+        console.error("Failed to fetch match details", err);
+      }
+    };
+
+    fetchDetails();
+  }, [match]);
+
   if (!match) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-center items-center bg-black/30 backdrop-blur-sm">
-      {/* Modal container */}
-      <div className="relative bg-white rounded-2xl shadow-2xl w-[90%] max-w-md p-6">
-        {/* Close Button */}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+      <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-xl p-6 md:p-8">
         <button
           onClick={onClose}
-          className="absolute top-3 right-4 text-gray-500 hover:text-red-500 hover:cursor-pointer text-xl font-bold "
+          className="absolute top-4 right-5 text-gray-400 hover:text-red-500 text-2xl hover:cursor-pointer"
         >
-          ×
+          &times;
         </button>
 
-        {/* Match Content */}
-        <div className="flex justify-between items-center text-center">
-          {/* Home Team */}
+        {/* Teams and Match Info */}
+        <div className="flex items-center justify-between text-center mb-6">
           <div className="flex flex-col items-center w-1/3">
             <img
               src={match.homeTeam.crest}
               alt={match.homeTeam.name}
-              className="w-14 h-14 object-contain mb-2"
+              className="w-16 h-16 mb-2"
             />
-            <span className="font-semibold text-sm text-gray-800">
+            <span className="text-sm font-semibold text-gray-800 text-center">
               {match.homeTeam.name}
             </span>
           </div>
 
-          {/* VS and Time */}
-          <div className="flex flex-col items-center w-1/3">
-            <span className="text-gray-500 font-semibold">VS</span>
-            <span className="text-xs text-gray-400 mt-2">
+          <div className="w-1/3 text-center">
+            <div className="text-xs text-gray-500 font-medium">VS</div>
+            <div className="text-xs mt-2 text-gray-600">
               {dayjs(match.date).format("MMM D, h:mm A")}
-            </span>
+            </div>
           </div>
 
-          {/* Away Team */}
           <div className="flex flex-col items-center w-1/3">
             <img
               src={match.awayTeam.crest}
               alt={match.awayTeam.name}
-              className="w-14 h-14 object-contain mb-2"
+              className="w-16 h-16 mb-2"
             />
-            <span className="font-semibold text-sm text-gray-800">
+            <span className="text-sm font-semibold text-gray-800 text-center">
               {match.awayTeam.name}
             </span>
           </div>
         </div>
 
-        <div className="p-4 border rounded-lg bg-gray-50">
-          <h3 className="font-bold mb-2">Odds Test</h3>
-          <div className="space-y-2">
-            <p>Home Win: {match?.odds?.homeWin || "No odds data"}</p>
-            <p>Draw: {match?.odds?.draw || "No odds data"}</p>
-            <p>Away Win: {match?.odds?.awayWin || "No odds data"}</p>
-          </div>
+        {/* Match Insights */}
+        <div className="bg-gray-50 rounded-xl border p-5">
+          <h3 className="text-lg font-bold text-gray-800 mb-3">
+            Match Insights
+          </h3>
+
+          {!extraData ? (
+            <div className="text-sm text-gray-500">Loading stats...</div>
+          ) : (
+            <div className="space-y-4">
+              <div className="text-sm flex flex-col gap-2 text-gray-700">
+                <div className="flex justify-between">
+                  <div>
+                    <span className="font-semibold">
+                      {extraData.homeTeam.name}
+                    </span>
+                    : {extraData.homeTeam.won}W / {extraData.homeTeam.draw}D /{" "}
+                    {extraData.homeTeam.lost}L –{" "}
+                    <span className="font-medium">
+                      {extraData.homeTeam.points} pts
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="font-semibold">
+                      {extraData.awayTeam.name}
+                    </span>
+                    : {extraData.awayTeam.won}W / {extraData.awayTeam.draw}D /{" "}
+                    {extraData.awayTeam.lost}L –{" "}
+                    <span className="font-medium">
+                      {extraData.awayTeam.points} pts
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="font-semibold text-sm text-gray-800 mb-1">
+                  Select Your Bet
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setSelectedBet("homeWin")}
+                    className={`py-2 rounded-lg text-sm font-medium transition hover:cursor-pointer ${
+                      selectedBet === "homeWin"
+                        ? "bg-blue-600 text-white"
+                        : "bg-white border border-gray-300 text-gray-800 hover:bg-gray-100 "
+                    }`}
+                  >
+                    Home <br /> {extraData.odds.homeWin}
+                  </button>
+                  <button
+                    onClick={() => setSelectedBet("draw")}
+                    className={`py-2 rounded-lg text-sm font-medium transition hover:cursor-pointer ${
+                      selectedBet === "draw"
+                        ? "bg-blue-600 text-white"
+                        : "bg-white border border-gray-300 text-gray-800 hover:bg-gray-100"
+                    }`}
+                  >
+                    Draw <br /> {extraData.odds.draw}
+                  </button>
+                  <button
+                    onClick={() => setSelectedBet("awayWin")}
+                    className={`py-2 rounded-lg text-sm font-medium transition hover:cursor-pointer ${
+                      selectedBet === "awayWin"
+                        ? "bg-blue-600 text-white"
+                        : "bg-white border border-gray-300 text-gray-800 hover:bg-gray-100"
+                    }`}
+                  >
+                    Away <br /> {extraData.odds.awayWin}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Debug button (optional: hide in prod) */}
+        <div className="mt-4 text-center">
           <button
-            onClick={() => console.log("Full match data:", match)}
-            className="mt-3 px-3 py-1 bg-blue-100 text-blue-800 rounded text-sm"
+            onClick={() => console.log("Match + Odds:", { match, extraData })}
+            className="text-xs text-blue-600 hover:underline"
           >
             Log Match Data
           </button>
