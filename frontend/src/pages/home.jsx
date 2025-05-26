@@ -48,8 +48,12 @@ function Home() {
           {userStats && (
             <div className="flex items-center space-x-4">
               <div>
-                <p className="text-sm font-medium">Balance: ${userStats.balance?.toFixed(2)}</p>
-                <p className="text-sm text-gray-600">Profit: ${userStats.profit?.toFixed(2)}</p>
+                <p className="text-sm font-medium">
+                  Balance: ${userStats.balance?.toFixed(2)}
+                </p>
+                <p className="text-sm text-gray-600">
+                  Profit: ${userStats.profit?.toFixed(2)}
+                </p>
               </div>
               <div className="relative">
                 <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-white font-bold">
@@ -80,7 +84,17 @@ function Home() {
         </div>
 
         {selectedMatch && (
-          <MatchModal match={selectedMatch} onClose={() => setSelectedMatch(null)} />
+          <MatchModal
+            match={selectedMatch}
+            onClose={() => setSelectedMatch(null)}
+            onBetPlaced={(newBalance) => {
+              setUserStats((prev) => ({
+                ...prev,
+                balance: newBalance,
+              }));
+              setSelectedMatch(null); // ✅ close modal
+            }}
+          />
         )}
       </div>
     </div>

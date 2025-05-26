@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from "react";
 import dayjs from "dayjs";
 import api from "../services/api";
+import supabase from "../../supabaseClient.js";
 
-function MatchModal({ match, onClose }) {
+function MatchModal({ match, onClose, onBetPlaced }) {
   const [extraData, setExtraData] = useState(null);
   const [selectedBet, setSelectedBet] = useState(null);
+  const [betAmount, setBetAmount] = useState("");
+  const [isPlacingBet, setIsPlacingBet] = useState(false);
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
     const fetchDetails = async () => {
@@ -137,6 +141,97 @@ function MatchModal({ match, onClose }) {
                   </button>
                 </div>
               </div>
+              {selectedBet && (
+                <div className="mt-4 space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Enter Bet Amount
+                  </label>
+                  <input
+                    type="number"
+                    value={betAmount}
+                    onChange={(e) => setBetAmount(e.target.value)}
+                    placeholder="e.g. 100"
+                    className="w-full p-2 border rounded"
+                    min={1}
+                  />
+
+                  {/* Calculate winnings */}
+                  {betAmount > 0 && (
+                    <div className="text-sm text-green-700 font-medium">
+                      Total Winnings: $
+                      {(
+                        betAmount *
+                        (selectedBet === "homeWin"
+                          ? extraData.odds.homeWin
+                          : selectedBet === "awayWin"
+                          ? extraData.odds.awayWin
+                          : extraData.odds.draw)
+                      ).toFixed(2)}
+                    </div>
+                  )}
+
+                  <button
+                    className="w-full mt-3 bg-green-600 text-white py-2 rounded hover:bg-green-700 hover:cursor-pointer"
+                    onClick={async () => {
+                      if (!betAmount || betAmount <= 0) {
+                        return alert("Enter a valid bet amount.");
+                      }
+
+                      const { data: sessionData } =
+                        await supabase.auth.getSession();
+                      const userId = sessionData.session?.user?.id;
+
+                      if (!userId) {
+                        return alert("You must be logged in to place a bet.");
+                      }
+
+                      const body = {
+                        userId,
+                        matchId: match.id,
+                        user_selection: selectedBet,
+                        user_team:
+                          selectedBet === "homeWin"
+                            ? match.homeTeam.name
+                            : selectedBet === "awayWin"
+                            ? match.awayTeam.name
+                            : "Draw",
+                        amount: parseFloat(betAmount),
+                        odds:
+                          selectedBet === "homeWin"
+                            ? extraData.odds.homeWin
+                            : selectedBet === "awayWin"
+                            ? extraData.odds.awayWin
+                            : extraData.odds.draw,
+                      };
+
+                      try {
+                        setIsPlacingBet(true);
+                        const res = await api.post("/place-bet", body);
+                        const newBalance = res.data.newBalance;
+                        if (onBetPlaced) {
+                          onBetPlaced(newBalance); // Pass it to parent
+                        }
+                        setMessage(res.data.message || "Bet placed!");
+                        console.log("✅ Bet placed:", res.data);
+                      } catch (err) {
+                        console.error("❌ Failed to place bet", err);
+                        alert(
+                          err.response?.data?.error || "Failed to place bet."
+                        );
+                      } finally {
+                        setIsPlacingBet(false);
+                      }
+                    }}
+                  >
+                    Place Bet
+                  </button>
+                  {message && (
+                    <div className="text-center text-sm text-green-700 font-medium mt-2">
+                      {message}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

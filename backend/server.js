@@ -247,6 +247,8 @@ app.post("/api/place-bet", async (req, res) => {
     }
 
     // 3️⃣ Deduct balance from user
+    console.log("Updating balance:", user.balance, "-", amount);
+    console.log("User ID for update:", userId);
     const { error: updateError } = await supabase
       .from("users")
       .update({ balance: user.balance - amount })
