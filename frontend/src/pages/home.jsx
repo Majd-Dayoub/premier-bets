@@ -11,6 +11,11 @@ function Home() {
   const [selectedMatch, setSelectedMatch] = useState(null);
   const [userStats, setUserStats] = useState(null);
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut(); // Clears session
+    localStorage.clear(); // Optional: remove custom storage
+    window.location.href = "/"; // Redirect to landing/login
+  };
   useEffect(() => {
     const fetchMatches = async () => {
       try {
@@ -59,7 +64,10 @@ function Home() {
                 <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-white font-bold">
                   {userStats.username?.[0]?.toUpperCase() || "U"}
                 </div>
-                <button className="absolute top-10 right-0 text-xs text-blue-600 underline">
+                <button
+                  onClick={handleLogout}
+                  className="absolute top-10 right-0 text-xs text-blue-600 underline"
+                >
                   Logout
                 </button>
               </div>
