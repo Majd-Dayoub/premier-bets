@@ -198,75 +198,42 @@ function calculateBettingOdds(homeStrength, awayStrength, drawFactor = 0.25) {
 }
 
 app.post("/api/place-bet", async (req, res) => {
-  const {
-    userId,
-    matchId,
-    user_selection, // ✅ matches your DB column
-    user_team,
-    amount,
-    odds
-  } = req.body;
+  const { userId, matchId, user_selection, user_team, amount, odds } = req.body;
 
-  // ✅ Validate required fields
-  if (!userId || !matchId || !user_selection || !user_team || !amount || !odds) {
+  // Validate required fields
+  if (!userId || !matchId || !user_selection || !user_team || amount == null || odds == null) {
     return res.status(400).json({ error: "Missing required bet fields." });
   }
 
+  // Optional extra validation
+  if (Number(amount) <= 0) {
+    return res.status(400).json({ error: "Amount must be greater than 0." });
+  }
+
   try {
-    // 1️⃣ Fetch user to check balance
-    const { data: user, error: userError } = await supabase
-      .from("users")
-      .select("*")
-      .eq("id", userId)
-      .single();
-
-    if (userError || !user) {
-      return res.status(404).json({ error: "User not found." });
-    }
-
-    if (user.balance < amount) {
-      return res.status(400).json({ error: "Insufficient balance." });
-    }
-
-    // 2️⃣ Insert bet into 'bets' table
-    const { error: insertError } = await supabase.from("bets").insert({
-      user_id: userId,
-      match_id: matchId,
-      user_selection, // ✅ this is now correct
-      user_team,
-      amount,
-      odds,
-      is_settled: false,
-      won_amount: null,
-      created_at: new Date().toISOString()
+    // Call your Supabase RPC (Postgres function)
+    const { data, error } = await supabase.rpc("place_bet_simple", {
+      p_user_id: userId,
+      p_match_id: matchId,              // make sure type matches your SQL function
+      p_user_selection: user_selection,
+      p_user_team: user_team,
+      p_amount: amount,
+      p_odds: odds,
     });
 
-    if (insertError) {
-      console.error("❌ Error inserting bet:", insertError.message);
-      return res.status(500).json({ error: "Failed to place bet." });
+    if (error) {
+      // This will catch "User not found" / "Insufficient balance" from the function too
+      return res.status(400).json({ error: error.message });
     }
 
-    // 3️⃣ Deduct balance from user
-    console.log("Updating balance:", user.balance, "-", amount);
-    console.log("User ID for update:", userId);
-    const { error: updateError } = await supabase
-      .from("users")
-      .update({ balance: user.balance - amount })
-      .eq("id", userId);
-
-    if (updateError) {
-      return res.status(500).json({ error: "Bet placed but failed to update balance." });
-    }
-
-    // ✅ Success
-    res.status(201).json({
+    // data is the numeric return value (new balance)
+    return res.status(201).json({
       message: "Bet placed successfully.",
-      newBalance: user.balance - amount
+      newBalance: data,
     });
-
   } catch (err) {
-    console.error("❌ Server error:", err.message);
-    res.status(500).json({ error: "Server error placing bet." });
+    console.error("Server error placing bet:", err.message);
+    return res.status(500).json({ error: "Server error placing bet." });
   }
 });
 

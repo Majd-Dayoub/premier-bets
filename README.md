@@ -16,7 +16,7 @@ Built with React, Node.js, PostgreSQL, and real football data.
 
 - Frontend: [React] + [Vite] + [Tailwind CSS]
 - Backend: [Node.js]+ [Express]
-- Database: [PostgreSQL] + [Supabase]
+- Database: [Supabase]
 - Football API: [Football-data.org]
 - Version Control: [Github]
 

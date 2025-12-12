@@ -40,7 +40,7 @@ function LandingPage() {
     if (userId) {
       await supabase.from("users").insert({
         id: userId,
-        username: signupEmail, // optional
+        email: signupEmail, // optional
       });
       alert("Sign-up successful!");
     }
