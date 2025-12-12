@@ -19,6 +19,10 @@ function Home() {
   useEffect(() => {
     const fetchMatches = async () => {
       try {
+        // 1) triggers sync, but will usually SKIP due to cooldown
+        await api.post("/sync-matches");
+
+        // 2) always reads from your DB-backed /fetch-matches
         const res = await api.get("/fetch-matches");
         setMatches(res.data);
       } catch (err) {

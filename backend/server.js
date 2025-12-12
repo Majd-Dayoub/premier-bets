@@ -15,6 +15,29 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+async function requireAuth(req, res, next) {
+  try {
+    const auth = req.headers.authorization || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+
+    if (!token) {
+      return res.status(401).json({ error: "Missing Authorization token" });
+    }
+
+    // Validate token with Supabase and get the authenticated user
+    const { data, error } = await supabase.auth.getUser(token);
+
+    if (error || !data?.user) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+
+    req.user = data.user; // <- source of truth
+    next();
+  } catch (e) {
+    return res.status(500).json({ error: "Auth check failed" });
+  }
+}
+
 //Routes
 
 // Home route
@@ -30,42 +53,47 @@ const headers = {
 // Fetch Fixtures 
 app.get("/api/fetch-matches", async (req, res) => {
   try {
-    const yesterday = dayjs().subtract(1, 'day').format("YYYY-MM-DD"); // Yesterday's date in API format
-    const twoWeeksLater = dayjs().add(14, 'day').format("YYYY-MM-DD"); // Two weeks later
-    const response = await axios.get("https://api.football-data.org/v4/competitions/PL/matches", {
-      headers: {
-        "X-Auth-Token": process.env.FOOTBALL_DATA_API_KEY,
-      },
-      params: {
-        dateFrom: yesterday,
-        dateTo: twoWeeksLater,
-      }
-    });
+    const from = dayjs().subtract(1, "day").toISOString();
+    const to = dayjs().add(14, "day").toISOString();
 
-    // ✅ Clean up the matches before sending to frontend
-    const cleanedMatches = response.data.matches.map(match => ({
-      id: match.id,
-      date: match.utcDate,
+    const { data, error } = await supabase
+      .from("matches")
+      .select(`
+        match_id, utc_date,
+        home_team_id, home_team_name, home_team_tla, home_team_crest,
+        away_team_id, away_team_name, away_team_tla, away_team_crest
+      `)
+      .gte("utc_date", from)
+      .lte("utc_date", to)
+      .order("utc_date", { ascending: true });
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Return EXACT same shape your frontend expects
+    const cleanedMatches = (data || []).map((m) => ({
+      id: m.match_id,
+      date: m.utc_date,
       homeTeam: {
-        id: match.homeTeam.id,
-        name: match.homeTeam.name,
-        tla: match.homeTeam.tla,
-        crest: match.homeTeam.crest,
+        id: m.home_team_id,
+        name: m.home_team_name,
+        tla: m.home_team_tla,
+        crest: m.home_team_crest,
       },
       awayTeam: {
-        id: match.awayTeam.id,
-        name: match.awayTeam.name,
-        tla: match.awayTeam.tla,
-        crest: match.awayTeam.crest,
+        id: m.away_team_id,
+        name: m.away_team_name,
+        tla: m.away_team_tla,
+        crest: m.away_team_crest,
       },
     }));
 
-    res.json(cleanedMatches);    // ✅ Send clean matches to frontend/postman
+    return res.json(cleanedMatches);
   } catch (err) {
     console.error(err.message);
-    res.status(500).json({ error: "Failed to fetch matches from Football-Data.org" });
+    return res.status(500).json({ error: "Failed to fetch matches from DB" });
   }
 });
+
 
 
 
@@ -197,36 +225,29 @@ function calculateBettingOdds(homeStrength, awayStrength, drawFactor = 0.25) {
   };
 }
 
-app.post("/api/place-bet", async (req, res) => {
-  const { userId, matchId, user_selection, user_team, amount, odds } = req.body;
+app.post("/api/place-bet", requireAuth, async (req, res) => {
+  const userId = req.user.id;
+  const { matchId, user_selection, user_team, amount, odds } = req.body;
 
-  // Validate required fields
-  if (!userId || !matchId || !user_selection || !user_team || amount == null || odds == null) {
+  if (!matchId || !user_selection || !user_team || amount == null || odds == null) {
     return res.status(400).json({ error: "Missing required bet fields." });
   }
-
-  // Optional extra validation
   if (Number(amount) <= 0) {
     return res.status(400).json({ error: "Amount must be greater than 0." });
   }
 
   try {
-    // Call your Supabase RPC (Postgres function)
     const { data, error } = await supabase.rpc("place_bet_simple", {
       p_user_id: userId,
-      p_match_id: matchId,              // make sure type matches your SQL function
+      p_match_id: matchId,
       p_user_selection: user_selection,
       p_user_team: user_team,
       p_amount: amount,
       p_odds: odds,
     });
 
-    if (error) {
-      // This will catch "User not found" / "Insufficient balance" from the function too
-      return res.status(400).json({ error: error.message });
-    }
+    if (error) return res.status(400).json({ error: error.message });
 
-    // data is the numeric return value (new balance)
     return res.status(201).json({
       message: "Bet placed successfully.",
       newBalance: data,
@@ -236,6 +257,97 @@ app.post("/api/place-bet", async (req, res) => {
     return res.status(500).json({ error: "Server error placing bet." });
   }
 });
+
+
+app.get("/api/bet-history", requireAuth, async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const { data, error } = await supabase
+      .from("bets")
+      .select("id, match_id, user_selection, user_team, amount, odds, is_settled, won_amount, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+
+    if (error) return res.status(500).json({ error: "Failed to fetch bet history." });
+
+    return res.json({ bets: data });
+  } catch (err) {
+    console.error("Server error fetching bet history:", err.message);
+    return res.status(500).json({ error: "Server error fetching bet history." });
+  }
+});
+
+
+const SYNC_COOLDOWN_MINUTES = 360; // 6 hours (set to what you want)
+
+app.post("/api/sync-matches", async (req, res) => {
+  try {
+    // Check last sync time
+    const { data: lastRow, error: lastErr } = await supabase
+      .from("matches")
+      .select("last_synced_at")
+      .order("last_synced_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (lastErr) return res.status(500).json({ error: lastErr.message });
+
+    const now = dayjs();
+    const lastSync = lastRow?.last_synced_at ? dayjs(lastRow.last_synced_at) : null;
+
+    if (lastSync && now.diff(lastSync, "minute") < SYNC_COOLDOWN_MINUTES) {
+      return res.json({
+        message: "Sync skipped (cooldown active)",
+        lastSyncedAt: lastRow.last_synced_at,
+      });
+    }
+
+    const yesterday = dayjs().subtract(1, "day").format("YYYY-MM-DD");
+    const twoWeeksLater = dayjs().add(14, "day").format("YYYY-MM-DD");
+
+    const response = await axios.get(
+      "https://api.football-data.org/v4/competitions/PL/matches",
+      {
+        headers: { "X-Auth-Token": process.env.FOOTBALL_DATA_API_KEY },
+        params: { dateFrom: yesterday, dateTo: twoWeeksLater },
+      }
+    );
+
+    const rows = response.data.matches.map((m) => ({
+      match_id: m.id,
+      utc_date: m.utcDate,
+      status: m.status,
+
+      home_team_id: m.homeTeam.id,
+      home_team_name: m.homeTeam.name,
+      home_team_tla: m.homeTeam.tla,
+      home_team_crest: m.homeTeam.crest,
+
+      away_team_id: m.awayTeam.id,
+      away_team_name: m.awayTeam.name,
+      away_team_tla: m.awayTeam.tla,
+      away_team_crest: m.awayTeam.crest,
+
+      home_score: m.score?.fullTime?.home ?? null,
+      away_score: m.score?.fullTime?.away ?? null,
+
+      last_synced_at: new Date().toISOString(),
+    }));
+
+    const { error: upsertErr } = await supabase
+      .from("matches")
+      .upsert(rows, { onConflict: "match_id" });
+
+    if (upsertErr) return res.status(500).json({ error: upsertErr.message });
+
+    return res.json({ message: "Matches synced", count: rows.length });
+  } catch (err) {
+    console.error(err.message);
+    return res.status(500).json({ error: "Failed to sync matches" });
+  }
+});
+
 
 
 
