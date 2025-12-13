@@ -21,11 +21,6 @@ function Home() {
   const sortedDateKeys = Object.keys(groupedMatches).sort((a, b) =>
     dayjs(a).isAfter(dayjs(b)) ? 1 : -1
   );
-  const handleLogout = async () => {
-    await supabase.auth.signOut(); // Clears session
-    localStorage.clear(); // Optional: remove custom storage
-    window.location.href = "/"; // Redirect to landing/login
-  };
   useEffect(() => {
     const fetchMatches = async () => {
       try {

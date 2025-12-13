@@ -1,16 +1,17 @@
 import React, { useEffect, useState } from "react";
 import dayjs from "dayjs";
 import api from "../services/api";
-import supabase from "../../supabaseClient.js";
 
 function MatchModal({ match, onClose, onBetPlaced }) {
   const [extraData, setExtraData] = useState(null);
-  const [selectedBet, setSelectedBet] = useState(null);
+  const [selectedBet, setSelectedBet] = useState(null); // HOME | DRAW | AWAY
   const [betAmount, setBetAmount] = useState("");
   const [isPlacingBet, setIsPlacingBet] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
+    if (!match?.id) return;
+
     const fetchDetails = async () => {
       try {
         const res = await api.get("/fetch-standings", {
@@ -23,9 +24,20 @@ function MatchModal({ match, onClose, onBetPlaced }) {
     };
 
     fetchDetails();
-  }, [match]);
+  }, [match?.id]);
 
   if (!match) return null;
+
+  const getSelectedOdds = () => {
+    if (!extraData) return null;
+    if (selectedBet === "HOME") return extraData.odds.homeWin;
+    if (selectedBet === "AWAY") return extraData.odds.awayWin;
+    if (selectedBet === "DRAW") return extraData.odds.draw;
+    return null;
+  };
+
+  const selectedOdds = getSelectedOdds();
+  const numericAmount = Number(betAmount);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
@@ -110,29 +122,31 @@ function MatchModal({ match, onClose, onBetPlaced }) {
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   <button
-                    onClick={() => setSelectedBet("homeWin")}
+                    onClick={() => setSelectedBet("HOME")}
                     className={`py-2 rounded-lg text-sm font-medium transition hover:cursor-pointer ${
-                      selectedBet === "homeWin"
+                      selectedBet === "HOME"
                         ? "bg-blue-600 text-white"
-                        : "bg-white border border-gray-300 text-gray-800 hover:bg-gray-100 "
+                        : "bg-white border border-gray-300 text-gray-800 hover:bg-gray-100"
                     }`}
                   >
                     Home <br /> {extraData.odds.homeWin}
                   </button>
+
                   <button
-                    onClick={() => setSelectedBet("draw")}
+                    onClick={() => setSelectedBet("DRAW")}
                     className={`py-2 rounded-lg text-sm font-medium transition hover:cursor-pointer ${
-                      selectedBet === "draw"
+                      selectedBet === "DRAW"
                         ? "bg-blue-600 text-white"
                         : "bg-white border border-gray-300 text-gray-800 hover:bg-gray-100"
                     }`}
                   >
                     Draw <br /> {extraData.odds.draw}
                   </button>
+
                   <button
-                    onClick={() => setSelectedBet("awayWin")}
+                    onClick={() => setSelectedBet("AWAY")}
                     className={`py-2 rounded-lg text-sm font-medium transition hover:cursor-pointer ${
-                      selectedBet === "awayWin"
+                      selectedBet === "AWAY"
                         ? "bg-blue-600 text-white"
                         : "bg-white border border-gray-300 text-gray-800 hover:bg-gray-100"
                     }`}
@@ -141,6 +155,7 @@ function MatchModal({ match, onClose, onBetPlaced }) {
                   </button>
                 </div>
               </div>
+
               {selectedBet && (
                 <div className="mt-4 space-y-2">
                   <label className="block text-sm font-medium text-gray-700">
@@ -156,75 +171,64 @@ function MatchModal({ match, onClose, onBetPlaced }) {
                   />
 
                   {/* Calculate winnings */}
-                  {betAmount > 0 && (
+                  {numericAmount > 0 && selectedOdds && (
                     <div className="text-sm text-green-700 font-medium">
                       Total Winnings: $
-                      {(
-                        betAmount *
-                        (selectedBet === "homeWin"
-                          ? extraData.odds.homeWin
-                          : selectedBet === "awayWin"
-                          ? extraData.odds.awayWin
-                          : extraData.odds.draw)
-                      ).toFixed(2)}
+                      {(numericAmount * Number(selectedOdds)).toFixed(2)}
                     </div>
                   )}
 
                   <button
-                    className="w-full mt-3 bg-green-600 text-white py-2 rounded hover:bg-green-700 hover:cursor-pointer"
+                    disabled={isPlacingBet}
+                    className={`w-full mt-3 text-white py-2 rounded hover:cursor-pointer ${
+                      isPlacingBet
+                        ? "bg-green-400"
+                        : "bg-green-600 hover:bg-green-700"
+                    }`}
                     onClick={async () => {
-                      if (!betAmount || betAmount <= 0) {
+                      if (!numericAmount || numericAmount <= 0) {
                         return alert("Enter a valid bet amount.");
                       }
-
-                      const { data: sessionData } =
-                        await supabase.auth.getSession();
-                      const userId = sessionData.session?.user?.id;
-
-                      if (!userId) {
-                        return alert("You must be logged in to place a bet.");
+                      if (!selectedOdds) {
+                        return alert("Please select a bet type.");
                       }
 
                       const body = {
-                        userId,
                         matchId: match.id,
-                        user_selection: selectedBet,
+                        user_selection: selectedBet, // HOME/DRAW/AWAY (settlement-friendly)
                         user_team:
-                          selectedBet === "homeWin"
+                          selectedBet === "HOME"
                             ? match.homeTeam.name
-                            : selectedBet === "awayWin"
+                            : selectedBet === "AWAY"
                             ? match.awayTeam.name
                             : "Draw",
-                        amount: parseFloat(betAmount),
-                        odds:
-                          selectedBet === "homeWin"
-                            ? extraData.odds.homeWin
-                            : selectedBet === "awayWin"
-                            ? extraData.odds.awayWin
-                            : extraData.odds.draw,
+                        amount: Number(numericAmount),
+                        odds: Number(selectedOdds),
                       };
 
                       try {
                         setIsPlacingBet(true);
                         const res = await api.post("/place-bet", body);
+
                         const newBalance = res.data.newBalance;
-                        if (onBetPlaced) {
-                          onBetPlaced(newBalance); // Pass it to parent
-                        }
+                        if (onBetPlaced) onBetPlaced(newBalance);
+
                         setMessage(res.data.message || "Bet placed!");
-                        console.log("✅ Bet placed:", res.data);
                       } catch (err) {
-                        console.error("❌ Failed to place bet", err);
-                        alert(
-                          err.response?.data?.error || "Failed to place bet."
-                        );
+                        console.error("❌ Failed to place bet", {
+                          message: err.message,
+                          status: err.response?.status,
+                          data: err.response?.data,
+                        });
+                        alert(err.response?.data?.error || "Failed to place bet.");
                       } finally {
                         setIsPlacingBet(false);
                       }
                     }}
                   >
-                    Place Bet
+                    {isPlacingBet ? "Placing Bet..." : "Place Bet"}
                   </button>
+
                   {message && (
                     <div className="text-center text-sm text-green-700 font-medium mt-2">
                       {message}

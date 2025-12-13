@@ -229,9 +229,18 @@ app.post("/api/place-bet", requireAuth, async (req, res) => {
   const userId = req.user.id;
   const { matchId, user_selection, user_team, amount, odds } = req.body;
 
-  if (!matchId || !user_selection || !user_team || amount == null || odds == null) {
+  if (!matchId || !user_selection || amount == null || odds == null) {
     return res.status(400).json({ error: "Missing required bet fields." });
   }
+
+  if (!["HOME", "DRAW", "AWAY"].includes(user_selection)) {
+    return res.status(400).json({ error: "Invalid user_selection. Use HOME, DRAW, or AWAY." });
+  }
+
+  if (user_selection !== "DRAW" && !user_team) {
+    return res.status(400).json({ error: "Missing user_team for HOME/AWAY bets." });
+  }
+
   if (Number(amount) <= 0) {
     return res.status(400).json({ error: "Amount must be greater than 0." });
   }
@@ -383,6 +392,53 @@ app.get("/api/fetch-bets", requireAuth, async (req, res) => {
   return res.json({ bets: enriched });
 });
 
+
+
+app.post("/api/settle-match", async (req, res) => {
+  try {
+    const { matchId } = req.body;
+    if (!matchId) return res.status(400).json({ error: "Missing matchId" });
+
+    const { data, error } = await supabase.rpc("settle_bets_for_match", {
+      p_match_id: Number(matchId),
+    });
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    return res.json({ message: "Settlement complete", settledCount: data });
+  } catch (err) {
+    console.error(err.message);
+    return res.status(500).json({ error: "Failed to settle match" });
+  }
+});
+
+
+app.post("/api/settle-finished", async (req, res) => {
+  try {
+    // Get matches that are finished
+    const { data: finished, error: matchErr } = await supabase
+      .from("matches")
+      .select("match_id")
+      .eq("status", "FINISHED");
+
+    if (matchErr) return res.status(500).json({ error: matchErr.message });
+
+    let totalSettled = 0;
+
+    for (const m of finished || []) {
+      const { data, error } = await supabase.rpc("settle_bets_for_match", {
+        p_match_id: Number(m.match_id),
+      });
+      if (error) continue;
+      totalSettled += Number(data || 0);
+    }
+
+    return res.json({ message: "Settlement run complete", totalSettled });
+  } catch (err) {
+    console.error(err.message);
+    return res.status(500).json({ error: "Failed to settle finished matches" });
+  }
+});
 
 
 
