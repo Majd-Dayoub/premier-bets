@@ -40,6 +40,7 @@ function BetHistory() {
         await api.post("/settle-finished", {});
         const res = await api.get("/fetch-bets");
         setBets(res.data?.bets || []);
+
       } catch (err) {
         console.error("Failed to load bets", {
           message: err.message,

@@ -66,55 +66,162 @@ Finished:
 
 Next to do:
 
-✅ 1. Implement Basic User Creation & Login UI
-So far you’re hardcoding users or not creating them at all on the frontend.
+You’re not “designing it wrong”, but you are currently mixing three concerns in one place, and that’s why it feels confusing:
 
-Goals:
+1. user-facing reads/writes (bets, history, matches list)
+2. system jobs (sync matches, sync standings, settle bets)
+3. “business logic” (odds calculation, settlement rules)
 
-Create a landing page with a username input to “sign up” or “log in” a user.
+When those aren’t separated, everything feels rudimentary and fragile even if it “works”.
 
-Save their userId in localStorage or sessionStorage.
+Here are your next **5 big steps**, in the order I’d do them, with very specific targets.
 
-Update the frontend to use this ID when placing a bet.
+---
 
-Why now?
+## 1) Lock down multi-user security properly (this is currently the biggest risk)
 
-Enables personalized betting
+Your Supabase tables showing **UNRESTRICTED** is a red flag: if RLS is off (or policies are too open), anyone can read/write everyone’s bets or balances.
 
-Unlocks the rest of the features (bet history, balance, etc.)
+What to do:
 
-✅ 2. Add Balance + Bet Status UI
-Let users see their balance and get feedback after placing a bet.
+- **Enable RLS** on: `bets`, `users`, and any table that has user-specific rows.
+- Add policies like:
 
-UI Enhancements:
+  - `bets`: user can `SELECT/INSERT` only where `user_id = auth.uid()`
+  - `users`: user can `SELECT/UPDATE` only their own row
 
-Display user balance in navbar or top right
+- Decide what is “public data”:
 
-After betting, show a toast/snackbar:
-✅ “Bet placed! New balance: $4,500”
+  - `matches`, `standings_pl`, `standings_meta` can be readable by everyone (that’s fine)
+  - but **sync endpoints** must not be public
 
-API Integration:
+Also remove `localStorage.setItem("userId", ...)` as a “source of truth”. The token already identifies the user. LocalStorage IDs are easy to spoof and become confusing.
 
-Use /api/get-user?userId=... to fetch balance
+Outcome: you can safely support multiple users without accidental data leaks.
 
-Update balance after placing a bet using /api/place-bet
+---
 
-✅ 3. Create “My Bets” Page
-Show users a list of all bets they’ve placed.
+## 2) Separate “system jobs” from “user APIs” (stop syncing on page load)
 
-New API Endpoint:
+Right now Home does:
 
-js
-Copy
-Edit
-// GET /api/my-bets?userId=abc-123
-const { data, error } = await supabase
-.from("bets")
-.select("\*")
-.eq("user_id", userId)
-.order("created_at", { ascending: false });
-Frontend Goals:
+- `POST /sync-matches`
+- `POST /sync-standings`
+- then `GET /fetch-matches`
 
-Create /my-bets route
+That’s convenient for development, but it’s not the right shape for a real app. With multiple users, you’ll spam your sync endpoints constantly.
 
-Show list: Match, Date, Team Picked, Odds, Amount, Status (Pending/Won/Lost)
+What to do instead:
+
+- Make sync jobs run on a schedule:
+
+  - Vercel Cron, Render Cron, GitHub Actions cron, or Supabase scheduled functions (any one is fine)
+
+- Change the frontend to only call:
+
+  - `GET /matches?from=...&to=...`
+  - `GET /standings?matchId=...`
+
+And protect “system job” routes:
+
+- `POST /admin/sync-matches`
+- `POST /admin/sync-standings`
+- `POST /admin/settle-finished`
+  Only callable by you (service role key, or an admin JWT check).
+
+Outcome: your app behaves correctly under load and doesn’t depend on someone visiting `/home` to keep data fresh.
+
+---
+
+## 3) Refactor `server.js` into a conventional backend structure (so you can reason about it)
+
+Your instincts are right: the logic is currently “all in one file”, so it’s hard to understand.
+
+Target structure:
+
+- `src/app.js` (express setup, middleware)
+- `src/routes/` (only route definitions)
+- `src/controllers/` (request parsing, response shape)
+- `src/services/`
+
+  - `matchesService.js` (DB reads/writes)
+  - `standingsService.js`
+  - `betsService.js`
+  - `footballDataClient.js` (axios wrapper)
+
+- `src/middleware/requireAuth.js`
+- `src/lib/supabaseServerClient.js`
+
+Then add two basics you’re missing:
+
+- request validation (zod or joi) so you stop manually checking fields everywhere
+- consistent error handling middleware so you stop repeating try/catch patterns
+
+Also: you import `uuidv4` but don’t use it. Clean those up as you refactor.
+
+Outcome: the API stops feeling like magic and becomes “boringly understandable”.
+
+---
+
+## 4) Make your betting model harder to exploit (fairness + correctness)
+
+Right now the client sends `odds` into `/place-bet`. Even if this is “just a simulator”, you’re training yourself into a bad habit: clients can lie.
+
+Fix the trust boundary:
+
+- Client sends only: `matchId`, `selection`, `amount`
+- Server:
+
+  - loads the match teams
+  - loads cached standings snapshot
+  - computes odds server-side
+  - stores the odds used at bet time
+
+Also add “betting rules”:
+
+- reject bets if match status is not `SCHEDULED` (or if kickoff is within X minutes)
+- enforce minimum/maximum bet amount
+- enforce sufficient balance (ideally inside the DB RPC so it’s atomic)
+
+Outcome: the logic is consistent and multiplayer-safe.
+
+---
+
+## 5) Tighten the data layer and API contracts (so your frontend becomes simpler)
+
+Two high-impact improvements:
+
+### A) Fix sync metadata design
+
+In `sync-matches`, you store `last_synced_at` on every match row, then query “latest last_synced_at” by sorting the matches table. That’s a smell.
+
+Instead:
+
+- create a `sync_meta` table with one row per job:
+
+  - `job_name: 'matches_pl'`
+  - `last_synced_at`
+  - `last_result`, `last_count`, `last_error`
+    Then sync logic reads/writes that single row.
+
+### B) Clean API naming and shapes
+
+Pick one convention and stick to it:
+
+- `GET /matches`
+- `GET /matches/:id`
+- `GET /matches/:id/odds` (or `GET /odds?matchId=...`)
+- `POST /bets`
+- `GET /bets`
+- `POST /admin/sync/matches`
+  Avoid “fetch-” prefix. It’s not wrong, it just becomes messy fast.
+
+Outcome: fewer mapping helper functions like `mapDbMatchToMatchCardShape`, and easier long-term scaling.
+
+---
+
+### If you only do one thing this week
+
+Do Step 1 (RLS + policies) and Step 2 (stop syncing on page load). Those two changes are the difference between “works for me” and “safe for real users”.
+
+If you want, paste your Supabase table schemas (columns + types) and whether RLS is enabled on each table, and I’ll give you the exact policies you should create for `users`, `bets`, and any “admin-only” operations.

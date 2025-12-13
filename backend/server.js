@@ -6,6 +6,7 @@ import supabase from "./supabaseClient.js";
 import axios from "axios";
 import { v4 as uuidv4 } from 'uuid'; //
 import dayjs from "dayjs";
+import { createClient } from "@supabase/supabase-js";
 
 // Configure dotenv
 dotenv.config();
@@ -16,33 +17,26 @@ app.use(cors());
 app.use(express.json());
 
 // Constants and Variables
-const STANDINGS_SYNC_COOLDOWN_MINUTES = 0; // 3 hours (tweak)
+const STANDINGS_SYNC_COOLDOWN_MINUTES = 30; // 3 hours (tweak)
 const COMPETITION_CODE = "PL";
-const SYNC_COOLDOWN_MINUTES = 360; // 6 hours (set to what you want)
+const SYNC_COOLDOWN_MINUTES = 30; // 6 hours (set to what you want)
 const MATCHES_LIMIT = 45;
 
+// Regquest Authentication
 async function requireAuth(req, res, next) {
-  try {
-    const auth = req.headers.authorization || "";
-    const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  const auth = req.headers.authorization || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
 
-    if (!token) {
-      return res.status(401).json({ error: "Missing Authorization token" });
-    }
+  if (!token) return res.status(401).json({ error: "Missing Authorization token" });
 
-    // Validate token with Supabase and get the authenticated user
-    const { data, error } = await supabase.auth.getUser(token);
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data?.user) return res.status(401).json({ error: "Invalid or expired token" });
 
-    if (error || !data?.user) {
-      return res.status(401).json({ error: "Invalid or expired token" });
-    }
-
-    req.user = data.user; // <- source of truth
-    next();
-  } catch (e) {
-    return res.status(500).json({ error: "Auth check failed" });
-  }
+  req.user = data.user;
+  req.accessToken = token; // add this
+  next();
 }
+
 
 //Routes
 
@@ -529,9 +523,22 @@ app.post("/api/sync-matches", async (req, res) => {
 app.get("/api/fetch-bets", requireAuth, async (req, res) => {
   const userId = req.user.id;
 
-  const { data: bets, error: betErr } = await supabase
+  const supabaseUser = createClient(
+    process.env.SUPABASE_API_URL,
+    process.env.SUPABASE_API_KEY,
+    {
+      global: {
+        headers: { Authorization: `Bearer ${req.accessToken}` },
+      },
+      auth: { persistSession: false },
+    }
+  );
+
+  const { data: bets, error: betErr } = await supabaseUser
     .from("bets")
-    .select("id, match_id, user_selection, user_team, amount, odds, is_settled, won_amount, result, settled_at, created_at")
+    .select(
+      "id, match_id, user_selection, user_team, amount, odds, is_settled, won_amount, result, settled_at, created_at"
+    )
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
@@ -541,14 +548,16 @@ app.get("/api/fetch-bets", requireAuth, async (req, res) => {
 
   let matchesById = {};
   if (matchIds.length > 0) {
-    const { data: matches, error: matchErr } = await supabase
+    const { data: matches, error: matchErr } = await supabaseUser
       .from("matches")
-      .select("match_id, utc_date, status, home_team_name, home_team_crest, away_team_name, away_team_crest, home_score, away_score")
+      .select(
+        "match_id, utc_date, status, home_team_name, home_team_crest, away_team_name, away_team_crest, home_score, away_score"
+      )
       .in("match_id", matchIds);
 
     if (matchErr) return res.status(500).json({ error: matchErr.message });
 
-    matchesById = Object.fromEntries((matches || []).map(m => [m.match_id, m]));
+    matchesById = Object.fromEntries((matches || []).map(m => [Number(m.match_id), m]));
   }
 
   const enriched = (bets || []).map(b => ({
@@ -558,6 +567,8 @@ app.get("/api/fetch-bets", requireAuth, async (req, res) => {
 
   return res.json({ bets: enriched });
 });
+
+
 
 
 

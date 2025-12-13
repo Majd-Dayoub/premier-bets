@@ -58,18 +58,36 @@ function Home() {
     };
 
     const fetchUserStats = async () => {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData.session?.user?.id;
-      if (!userId) return;
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      console.log("session", session);
+
+      if (!session?.user?.id) {
+        console.warn("No session yet. User not logged in.");
+        return;
+      }
+
+      const userId = session.user.id;
 
       const { data, error } = await supabase
         .from("users")
         .select("*")
         .eq("id", userId)
-        .single();
+        .maybeSingle(); // important
 
-      if (error) console.error("Failed to fetch user stats", error);
-      else setUserStats(data);
+      if (error) {
+        console.error("Failed to fetch user stats", error);
+        return;
+      }
+
+      if (!data) {
+        console.warn("No users row found for this user. It must be created.");
+        return;
+      }
+
+      setUserStats(data);
     };
 
     fetchMatches();
