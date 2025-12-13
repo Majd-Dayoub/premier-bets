@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../services/api";
 import supabase from "../../supabaseClient";
 import MatchCard from "../components/MatchCard";
-import NavBar from "../components/NavBar";
 import MatchModal from "../components/MatchModal";
+import DateSlider from "../components/DateSlider";
 import dayjs from "dayjs";
 
 function Home() {
@@ -11,23 +11,45 @@ function Home() {
   const [selectedMatch, setSelectedMatch] = useState(null);
   const [userStats, setUserStats] = useState(null);
 
-  const groupedMatches = matches.reduce((acc, match) => {
-    const dateKey = dayjs(match.date).format("YYYY-MM-DD"); // group key
-    if (!acc[dateKey]) acc[dateKey] = [];
-    acc[dateKey].push(match);
-    return acc;
-  }, {});
+  const groupedMatches = useMemo(() => {
+    return matches.reduce((acc, match) => {
+      const dateKey = dayjs(match.date).format("YYYY-MM-DD");
+      if (!acc[dateKey]) acc[dateKey] = [];
+      acc[dateKey].push(match);
+      return acc;
+    }, {});
+  }, [matches]);
 
-  const sortedDateKeys = Object.keys(groupedMatches).sort((a, b) =>
-    dayjs(a).isAfter(dayjs(b)) ? 1 : -1
-  );
+  const sortedDateKeys = useMemo(() => {
+    return Object.keys(groupedMatches).sort((a, b) =>
+      dayjs(a).isAfter(dayjs(b)) ? 1 : -1
+    );
+  }, [groupedMatches]);
+
+  const [selectedDate, setSelectedDate] = useState(null);
+
+  // Pick a good default date once matches load
+  useEffect(() => {
+    if (!sortedDateKeys.length) return;
+
+    const today = dayjs().format("YYYY-MM-DD");
+
+    // Prefer today if it exists, otherwise nearest future date, otherwise first
+    const exactToday = sortedDateKeys.find((d) => d === today);
+    const nextUpcoming = sortedDateKeys.find((d) => dayjs(d).isAfter(today));
+    const defaultDate = exactToday || nextUpcoming || sortedDateKeys[0];
+
+    setSelectedDate((prev) => prev ?? defaultDate);
+  }, [sortedDateKeys]);
+
+  const visibleMatches = selectedDate ? groupedMatches[selectedDate] || [] : [];
+
   useEffect(() => {
     const fetchMatches = async () => {
       try {
-        // 1) triggers sync, but will usually SKIP due to cooldown
         await api.post("/sync-matches");
+        await api.post("/sync-standings");
 
-        // 2) always reads from your DB-backed /fetch-matches
         const res = await api.get("/fetch-matches");
         setMatches(res.data);
       } catch (err) {
@@ -60,27 +82,35 @@ function Home() {
         <div className="flex-grow bg-gray-50 p-4">
           <h2 className="text-2xl font-bold mb-4">Upcoming Matches</h2>
 
-          <div className="space-y-8">
-            {sortedDateKeys.map((dateKey) => (
-              <div key={dateKey}>
-                <h3 className="text-lg font-bold text-gray-700 mb-3">
-                  {dayjs(dateKey).format("MMMM D, YYYY")}
-                </h3>
+          <DateSlider
+            dateKeys={sortedDateKeys}
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
+          />
 
-                <ul className="space-y-4">
-                  {groupedMatches[dateKey].map((match) => (
-                    <li
-                      key={match.id}
-                      onClick={() => setSelectedMatch(match)}
-                      className="bg-white shadow p-4 rounded cursor-pointer hover:bg-gray-100"
-                    >
-                      <MatchCard match={match} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
+          {selectedDate && (
+            <h3 className="text-lg font-bold text-gray-700 mb-3">
+              {dayjs(selectedDate).format("MMMM D, YYYY")}
+            </h3>
+          )}
+
+          <ul className="space-y-4">
+            {visibleMatches.map((match) => (
+              <li
+                key={match.id}
+                onClick={() => setSelectedMatch(match)}
+                className="bg-white shadow p-4 rounded cursor-pointer hover:bg-gray-100"
+              >
+                <MatchCard match={match} />
+              </li>
             ))}
-          </div>
+          </ul>
+
+          {selectedDate && visibleMatches.length === 0 && (
+            <div className="text-sm text-gray-600 mt-4">
+              No matches scheduled for this date.
+            </div>
+          )}
         </div>
 
         {selectedMatch && (
@@ -92,7 +122,7 @@ function Home() {
                 ...prev,
                 balance: newBalance,
               }));
-              setSelectedMatch(null); // ✅ close modal
+              setSelectedMatch(null);
             }}
           />
         )}

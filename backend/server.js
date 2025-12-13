@@ -15,6 +15,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Constants and Variables
+const STANDINGS_SYNC_COOLDOWN_MINUTES = 180; // 3 hours (tweak)
+const COMPETITION_CODE = "PL";
+const SYNC_COOLDOWN_MINUTES = 360; // 6 hours (set to what you want)
+const MATCHES_LIMIT = 45;
+
 async function requireAuth(req, res, next) {
   try {
     const auth = req.headers.authorization || "";
@@ -54,7 +60,7 @@ const headers = {
 app.get("/api/fetch-matches", async (req, res) => {
   try {
     const from = dayjs().subtract(1, "day").toISOString();
-    const to = dayjs().add(14, "day").toISOString();
+    const to = dayjs().add(MATCHES_LIMIT, "day").toISOString();
 
     const { data, error } = await supabase
       .from("matches")
@@ -97,62 +103,104 @@ app.get("/api/fetch-matches", async (req, res) => {
 
 
 
-
 app.get("/api/fetch-standings", async (req, res) => {
   try {
-    const matchId = req.query.matchId;
-
+    const matchId = Number(req.query.matchId);
     if (!matchId) {
       return res.status(400).json({ error: "Missing matchId query parameter." });
     }
 
-    // 1️⃣ Fetch match details
-    const matchResponse = await axios.get(`https://api.football-data.org/v4/matches/${matchId}`, {
-      headers,
-    });
-    const clickedMatch = matchResponse.data;
+    // 1) Get match from DB (no external match call)
+    const { data: matchRow, error: matchErr } = await supabase
+      .from("matches")
+      .select("match_id, home_team_id, away_team_id")
+      .eq("match_id", matchId)
+      .maybeSingle();
 
-    const homeTeamId = clickedMatch.homeTeam.id;
-    const awayTeamId = clickedMatch.awayTeam.id;
+    if (matchErr) return res.status(500).json({ error: matchErr.message });
+    if (!matchRow) return res.status(404).json({ error: "Match not found in DB." });
 
-    // 2️⃣ Fetch standings
-    const standingsResponse = await axios.get("https://api.football-data.org/v4/competitions/PL/standings", {
-      headers,
-    });
-    const standings = standingsResponse.data.standings[0].table;
+    const homeTeamId = matchRow.home_team_id;
+    const awayTeamId = matchRow.away_team_id;
 
-    // 3️⃣ Find both teams
-    const homeTeamStats = standings.find(team => team.team.id === homeTeamId);
-    const awayTeamStats = standings.find(team => team.team.id === awayTeamId);
+    // 2) Find latest standings snapshot time from meta
+    const { data: meta, error: metaErr } = await supabase
+      .from("standings_meta")
+      .select("last_synced_at, season_year")
+      .eq("competition_code", COMPETITION_CODE)
+      .maybeSingle();
 
-    if (!homeTeamStats || !awayTeamStats) {
-      return res.status(404).json({ error: "Could not find team stats in standings." });
+    if (metaErr) return res.status(500).json({ error: metaErr.message });
+
+    if (!meta?.last_synced_at) {
+      return res.status(503).json({
+        error: "Standings not synced yet. Call /api/sync-standings first.",
+      });
     }
 
-    // 4️⃣ Calculate strengths
-    const homeStrength = calculateTeamStrength(homeTeamStats);
-    const awayStrength = calculateTeamStrength(awayTeamStats);
+    // 3) Pull both teams from the latest snapshot
+    const { data: teams, error: standErr } = await supabase
+      .from("standings_pl")
+      .select(`
+        team_id, team_name, crest,
+        played_games, points, won, draw, lost, goal_difference, form
+      `)
+      .eq("competition_code", COMPETITION_CODE)
+      .eq("season_year", meta.season_year)
+      .eq("fetched_at", meta.last_synced_at)
+      .in("team_id", [homeTeamId, awayTeamId]);
 
-    // 5️⃣ Calculate betting odds
+    if (standErr) return res.status(500).json({ error: standErr.message });
+
+    const homeTeamStats = (teams || []).find(t => t.team_id === homeTeamId);
+    const awayTeamStats = (teams || []).find(t => t.team_id === awayTeamId);
+
+    if (!homeTeamStats || !awayTeamStats) {
+      return res.status(404).json({
+        error: "Could not find team stats in cached standings snapshot.",
+      });
+    }
+
+    // 4) Calculate strengths + odds (your existing logic)
+    const homeStrength = calculateTeamStrength({
+      playedGames: homeTeamStats.played_games,
+      points: homeTeamStats.points,
+      won: homeTeamStats.won,
+      draw: homeTeamStats.draw,
+      lost: homeTeamStats.lost,
+      goalDifference: homeTeamStats.goal_difference,
+      form: homeTeamStats.form,
+    });
+
+    const awayStrength = calculateTeamStrength({
+      playedGames: awayTeamStats.played_games,
+      points: awayTeamStats.points,
+      won: awayTeamStats.won,
+      draw: awayTeamStats.draw,
+      lost: awayTeamStats.lost,
+      goalDifference: awayTeamStats.goal_difference,
+      form: awayTeamStats.form,
+    });
+
     const odds = calculateBettingOdds(homeStrength, awayStrength);
 
-    // 6️⃣ Respond
-    res.json({
+    // 5) Return same response shape your frontend expects
+    return res.json({
       homeTeam: {
-        id: homeTeamStats.team.id,
-        name: homeTeamStats.team.name,
-        crest: homeTeamStats.team.crest,
-        playedGames: homeTeamStats.playedGames,
+        id: homeTeamStats.team_id,
+        name: homeTeamStats.team_name,
+        crest: homeTeamStats.crest,
+        playedGames: homeTeamStats.played_games,
         points: homeTeamStats.points,
         won: homeTeamStats.won,
         draw: homeTeamStats.draw,
         lost: homeTeamStats.lost,
       },
       awayTeam: {
-        id: awayTeamStats.team.id,
-        name: awayTeamStats.team.name,
-        crest: awayTeamStats.team.crest,
-        playedGames: awayTeamStats.playedGames,
+        id: awayTeamStats.team_id,
+        name: awayTeamStats.team_name,
+        crest: awayTeamStats.crest,
+        playedGames: awayTeamStats.played_games,
         points: awayTeamStats.points,
         won: awayTeamStats.won,
         draw: awayTeamStats.draw,
@@ -162,14 +210,117 @@ app.get("/api/fetch-standings", async (req, res) => {
         homeWin: odds.homeWinOdds,
         draw: odds.drawOdds,
         awayWin: odds.awayWinOdds,
-      }
+      },
+      cache: {
+        competition: COMPETITION_CODE,
+        seasonYear: meta.season_year,
+        snapshotAt: meta.last_synced_at,
+      },
     });
-
   } catch (err) {
     console.error("Error fetching standings:", err.message);
-    res.status(500).json({ error: "Failed to fetch standings or match details." });
+    return res.status(500).json({ error: "Failed to fetch cached standings." });
   }
 });
+
+
+
+
+function getSeasonStartYear() {
+  // Simple EPL season heuristic: Aug-May
+  const now = dayjs();
+  const month = now.month() + 1; // 1-12
+  return month >= 7 ? now.year() : now.year() - 1;
+}
+
+app.post("/api/sync-standings", async (req, res) => {
+  try {
+    const seasonYear = getSeasonStartYear();
+
+    // check meta
+    const { data: meta, error: metaErr } = await supabase
+      .from("standings_meta")
+      .select("last_synced_at, season_year")
+      .eq("competition_code", COMPETITION_CODE)
+      .maybeSingle();
+
+    if (metaErr) return res.status(500).json({ error: metaErr.message });
+
+    const now = dayjs();
+    const lastSync = meta?.last_synced_at ? dayjs(meta.last_synced_at) : null;
+
+    if (
+      lastSync &&
+      meta?.season_year === seasonYear &&
+      now.diff(lastSync, "minute") < STANDINGS_SYNC_COOLDOWN_MINUTES
+    ) {
+      return res.json({
+        message: "Standings sync skipped (cooldown active)",
+        lastSyncedAt: meta.last_synced_at,
+        seasonYear,
+      });
+    }
+
+    // 1 external call total
+    const standingsResponse = await axios.get(
+      `https://api.football-data.org/v4/competitions/${COMPETITION_CODE}/standings`,
+      { headers }
+    );
+
+    const table = standingsResponse.data?.standings?.[0]?.table || [];
+    const fetchedAt = new Date().toISOString();
+
+    const rows = table.map((t) => ({
+      competition_code: COMPETITION_CODE,
+      season_year: seasonYear,
+      fetched_at: fetchedAt,
+
+      team_id: t.team?.id ?? null,
+      team_name: t.team?.name ?? null,
+      crest: t.team?.crest ?? null,
+
+      position: t.position ?? null,
+      played_games: t.playedGames ?? null,
+      won: t.won ?? null,
+      draw: t.draw ?? null,
+      lost: t.lost ?? null,
+      points: t.points ?? null,
+      goals_for: t.goalsFor ?? null,
+      goals_against: t.goalsAgainst ?? null,
+      goal_difference: t.goalDifference ?? null,
+      form: t.form ?? null,
+    })).filter(r => r.team_id != null);
+
+    // Insert as a new snapshot (don’t overwrite old snapshots)
+    const { error: insErr } = await supabase
+      .from("standings_pl")
+      .insert(rows);
+
+    if (insErr) return res.status(500).json({ error: insErr.message });
+
+    // Update meta pointer
+    const { error: upMetaErr } = await supabase
+      .from("standings_meta")
+      .upsert({
+        competition_code: COMPETITION_CODE,
+        season_year: seasonYear,
+        last_synced_at: fetchedAt,
+      });
+
+    if (upMetaErr) return res.status(500).json({ error: upMetaErr.message });
+
+    return res.json({
+      message: "Standings synced",
+      seasonYear,
+      fetchedAt,
+      count: rows.length,
+    });
+  } catch (err) {
+    console.error(err.message);
+    return res.status(500).json({ error: "Failed to sync standings" });
+  }
+});
+
 
 
 function calculateTeamStrength(teamStats) {
@@ -288,7 +439,7 @@ app.get("/api/bet-history", requireAuth, async (req, res) => {
 });
 
 
-const SYNC_COOLDOWN_MINUTES = 360; // 6 hours (set to what you want)
+
 
 app.post("/api/sync-matches", async (req, res) => {
   try {
@@ -313,7 +464,7 @@ app.post("/api/sync-matches", async (req, res) => {
     }
 
     const yesterday = dayjs().subtract(1, "day").format("YYYY-MM-DD");
-    const twoWeeksLater = dayjs().add(14, "day").format("YYYY-MM-DD");
+    const twoWeeksLater = dayjs().add(30, "day").format("YYYY-MM-DD");
 
     const response = await axios.get(
       "https://api.football-data.org/v4/competitions/PL/matches",
