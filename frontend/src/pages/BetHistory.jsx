@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "../services/api";
-import MatchCard from "../components/MatchCard";
+import supabase from "../../supabaseClient";
 import MatchModal from "../components/MatchModal";
 import BetHistoryMatchCard from "../components/BetHistoryMatchCard";
 
@@ -14,7 +14,6 @@ function mapDbMatchToMatchCardShape(dbMatch) {
     homeTeam: {
       name: dbMatch.home_team_name,
       crest: dbMatch.home_team_crest,
-      // optional: id/tla not in your select, so omit
     },
     awayTeam: {
       name: dbMatch.away_team_name,
@@ -34,13 +33,29 @@ function BetHistory() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchBets = async () => {
+    let isMounted = true;
+
+    const load = async () => {
       try {
         setLoading(true);
-        await api.post("/settle-finished", {});
-        const res = await api.get("/fetch-bets");
-        setBets(res.data?.bets || []);
 
+        // Wait for an authenticated session before calling protected APIs
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session?.access_token) {
+          // User not logged in or session not ready yet
+          if (isMounted) setBets([]);
+          return;
+        }
+
+        // Now token will exist and interceptor will attach Authorization
+        const r = await api.post("/settle-finished", {});
+        console.log("Settled finished matches:", r.data);
+        const res = await api.get("/fetch-bets");
+
+        if (isMounted) setBets(res.data?.bets || []);
       } catch (err) {
         console.error("Failed to load bets", {
           message: err.message,
@@ -48,11 +63,22 @@ function BetHistory() {
           data: err.response?.data,
         });
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
-    fetchBets();
+    // Run once (in case session already exists)
+    load();
+
+    // Also run when auth becomes available (fixes “page loads before session ready”)
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      load();
+    });
+
+    return () => {
+      isMounted = false;
+      sub?.subscription?.unsubscribe();
+    };
   }, []);
 
   const openBets = useMemo(() => bets.filter((b) => !b.is_settled), [bets]);
@@ -111,7 +137,7 @@ function BetHistory() {
                       bet={bet}
                       match={matchForCard}
                       onClick={() => {
-                        // optional: show modal with match info
+                        // optional:
                         // if (matchForCard) setSelectedMatch(matchForCard);
                       }}
                     />
@@ -122,13 +148,10 @@ function BetHistory() {
           )}
         </div>
 
-        {/* Optional: reuse your MatchModal for extra info */}
         {selectedMatch && (
           <MatchModal
             match={selectedMatch}
             onClose={() => setSelectedMatch(null)}
-            // Bet placement not needed on history page, but the component may require it.
-            // If it does, pass a no-op:
             onBetPlaced={() => {}}
           />
         )}

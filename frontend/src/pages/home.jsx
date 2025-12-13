@@ -116,7 +116,14 @@ function Home() {
             {visibleMatches.map((match) => (
               <li
                 key={match.id}
-                onClick={() => setSelectedMatch(match)}
+                onClick={() => {
+                  if (
+                    match.status === "SCHEDULED" ||
+                    match.status === "TIMED"
+                  ) {
+                    setSelectedMatch(match);
+                  }
+                }}
                 className="bg-white shadow p-4 rounded cursor-pointer hover:bg-gray-100"
               >
                 <MatchCard match={match} />

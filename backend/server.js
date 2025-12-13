@@ -37,6 +37,15 @@ async function requireAuth(req, res, next) {
   next();
 }
 
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_API_URL,
+  process.env.SUPABASE_API_KEY,
+  {
+    auth: { persistSession: false },
+  }
+);
+
+
 
 //Routes
 
@@ -592,91 +601,94 @@ app.post("/api/settle-match", async (req, res) => {
 });
 
 // Used in bet history before fetching bets
-app.post("/api/settle-finished", async (req, res) => {
+app.post("/api/settle-finished", requireAuth, async (req, res) => {
   try {
-    // Optional override from client, otherwise default window = yesterday -> now
+    const supabaseUser = createClient(
+      process.env.SUPABASE_API_URL,
+      process.env.SUPABASE_API_KEY,
+      {
+        global: { headers: { Authorization: `Bearer ${req.accessToken}` } },
+        auth: { persistSession: false },
+      }
+    );
+
     const { from, to } = req.body || {};
 
     const fromIso = from
       ? dayjs(from).toISOString()
-      : dayjs().subtract(1, "day").toISOString();
+      : dayjs().subtract(7, "day").toISOString(); // widened to avoid missing finished games
 
     const toIso = to ? dayjs(to).toISOString() : dayjs().toISOString();
 
-    // 1) Find FINISHED matches in window
-    const { data: finishedMatches, error: matchErr } = await supabase
+    // 1) finished matches in window
+    const { data: finishedMatches, error: matchErr } = await supabaseUser
       .from("matches")
       .select("match_id, utc_date")
       .eq("status", "FINISHED")
       .gte("utc_date", fromIso)
       .lte("utc_date", toIso);
 
-    if (matchErr) {
-      return res.status(500).json({ error: matchErr.message });
-    }
+    if (matchErr) return res.status(500).json({ error: matchErr.message });
 
-    const matchIds = (finishedMatches || []).map((m) => String(m.match_id));
+    const matchIds = (finishedMatches || [])
+      .map((m) => Number(m.match_id))
+      .filter(Number.isFinite);
 
-    if (matchIds.length === 0) {
-      return res.json({
-        message: "No finished matches in time window",
-        from: fromIso,
-        to: toIso,
-        matchesConsidered: 0,
-        matchesWithOpenBets: 0,
-        totalSettled: 0,
-      });
-    }
-
-    // 2) Only settle matches that actually have open bets
-    const { data: openBetRows, error: betErr } = await supabase
+    // 2) open bets for those matches (for THIS user only)
+    const { data: openBetRows, error: betErr } = await supabaseUser
       .from("bets")
       .select("match_id")
       .in("match_id", matchIds)
       .eq("is_settled", false);
 
-    if (betErr) {
-      return res.status(500).json({ error: betErr.message });
-    }
+    if (betErr) return res.status(500).json({ error: betErr.message });
 
     const matchesWithOpenBets = [
-      ...new Set((openBetRows || []).map((b) => String(b.match_id))),
+      ...new Set((openBetRows || []).map((b) => Number(b.match_id)).filter(Number.isFinite)),
     ];
 
     let totalSettled = 0;
     const perMatch = [];
 
     for (const mid of matchesWithOpenBets) {
-      const { data: settledCount, error: settleErr } = await supabase.rpc(
+      const { data: settledCount, error: settleErr } = await supabaseUser.rpc(
         "settle_bets_for_match",
-        { p_match_id: Number(mid) }
+        { p_match_id: mid }
       );
 
       if (settleErr) {
-        perMatch.push({ matchId: mid, settledCount: 0, error: settleErr.message });
+        perMatch.push({
+          matchId: mid,
+          ok: false,
+          error: settleErr.message,
+        });
         continue;
       }
 
       const countNum = Number(settledCount || 0);
       totalSettled += countNum;
-      perMatch.push({ matchId: mid, settledCount: countNum });
+
+      perMatch.push({
+        matchId: mid,
+        ok: true,
+        settledCount: countNum,
+      });
     }
 
     return res.json({
       message: "Settlement run complete",
       from: fromIso,
       to: toIso,
-      matchesConsidered: matchIds.length,
+      finishedMatchesInWindow: matchIds.length,
       matchesWithOpenBets: matchesWithOpenBets.length,
       totalSettled,
       perMatch,
     });
   } catch (err) {
-    console.error(err.message);
+    console.error("Failed to settle finished matches:", err);
     return res.status(500).json({ error: "Failed to settle finished matches" });
   }
 });
-
 
 
 
