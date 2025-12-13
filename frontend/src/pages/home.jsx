@@ -11,6 +11,16 @@ function Home() {
   const [selectedMatch, setSelectedMatch] = useState(null);
   const [userStats, setUserStats] = useState(null);
 
+  const groupedMatches = matches.reduce((acc, match) => {
+    const dateKey = dayjs(match.date).format("YYYY-MM-DD"); // group key
+    if (!acc[dateKey]) acc[dateKey] = [];
+    acc[dateKey].push(match);
+    return acc;
+  }, {});
+
+  const sortedDateKeys = Object.keys(groupedMatches).sort((a, b) =>
+    dayjs(a).isAfter(dayjs(b)) ? 1 : -1
+  );
   const handleLogout = async () => {
     await supabase.auth.signOut(); // Clears session
     localStorage.clear(); // Optional: remove custom storage
@@ -55,17 +65,27 @@ function Home() {
         <div className="flex-grow bg-gray-50 p-4">
           <h2 className="text-2xl font-bold mb-4">Upcoming Matches</h2>
 
-          <ul className="space-y-4">
-            {matches.map((match) => (
-              <li
-                key={match.id}
-                onClick={() => setSelectedMatch(match)}
-                className="bg-white shadow p-4 rounded cursor-pointer hover:bg-gray-100"
-              >
-                <MatchCard match={match} />
-              </li>
+          <div className="space-y-8">
+            {sortedDateKeys.map((dateKey) => (
+              <div key={dateKey}>
+                <h3 className="text-lg font-bold text-gray-700 mb-3">
+                  {dayjs(dateKey).format("MMMM D, YYYY")}
+                </h3>
+
+                <ul className="space-y-4">
+                  {groupedMatches[dateKey].map((match) => (
+                    <li
+                      key={match.id}
+                      onClick={() => setSelectedMatch(match)}
+                      className="bg-white shadow p-4 rounded cursor-pointer hover:bg-gray-100"
+                    >
+                      <MatchCard match={match} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
+          </div>
         </div>
 
         {selectedMatch && (

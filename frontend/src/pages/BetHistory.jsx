@@ -67,7 +67,7 @@ function BetHistory() {
           <div className="mt-4 flex gap-2">
             <button
               onClick={() => setActiveTab("open")}
-              className={`px-4 py-2 rounded ${
+              className={`px-4 py-2 cursor-pointer rounded ${
                 activeTab === "open"
                   ? "bg-blue-600 text-white"
                   : "bg-gray-200 text-gray-800"
@@ -78,7 +78,7 @@ function BetHistory() {
 
             <button
               onClick={() => setActiveTab("settled")}
-              className={`px-4 py-2 rounded ${
+              className={`px-4 py-2 cursor-pointer rounded ${
                 activeTab === "settled"
                   ? "bg-blue-600 text-white"
                   : "bg-gray-200 text-gray-800"
