@@ -52,33 +52,6 @@ function Home() {
   return (
     <div className="p-4">
       <div className="flex flex-col min-h-screen bg-gray-100">
-        <div className="flex items-center justify-between bg-white p-4 shadow rounded mb-4">
-          <h1 className="text-xl font-bold">Premier League Bets</h1>
-          {userStats && (
-            <div className="flex items-center space-x-4">
-              <div>
-                <p className="text-sm font-medium">
-                  Balance: ${userStats.balance?.toFixed(2)}
-                </p>
-                <p className="text-sm text-gray-600">
-                  Profit: ${userStats.profit?.toFixed(2)}
-                </p>
-              </div>
-              <div className="relative">
-                <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center text-white font-bold">
-                  {userStats.username?.[0]?.toUpperCase() || "U"}
-                </div>
-                <button
-                  onClick={handleLogout}
-                  className="absolute top-10 right-0 text-xs text-blue-600 underline"
-                >
-                  Logout
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
         <div className="flex-grow bg-gray-50 p-4">
           <h2 className="text-2xl font-bold mb-4">Upcoming Matches</h2>
 

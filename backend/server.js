@@ -350,6 +350,41 @@ app.post("/api/sync-matches", async (req, res) => {
 
 
 
+app.get("/api/fetch-bets", requireAuth, async (req, res) => {
+  const userId = req.user.id;
+
+  const { data: bets, error: betErr } = await supabase
+    .from("bets")
+    .select("id, match_id, user_selection, user_team, amount, odds, is_settled, won_amount, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (betErr) return res.status(500).json({ error: betErr.message });
+
+  const matchIds = [...new Set((bets || []).map(b => Number(b.match_id)).filter(Boolean))];
+
+  let matchesById = {};
+  if (matchIds.length > 0) {
+    const { data: matches, error: matchErr } = await supabase
+      .from("matches")
+      .select("match_id, utc_date, status, home_team_name, home_team_crest, away_team_name, away_team_crest, home_score, away_score")
+      .in("match_id", matchIds);
+
+    if (matchErr) return res.status(500).json({ error: matchErr.message });
+
+    matchesById = Object.fromEntries((matches || []).map(m => [m.match_id, m]));
+  }
+
+  const enriched = (bets || []).map(b => ({
+    ...b,
+    match: matchesById[Number(b.match_id)] || null,
+  }));
+
+  return res.json({ bets: enriched });
+});
+
+
+
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
