@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import api from "../services/api";
 import MatchCard from "../components/MatchCard";
 import MatchModal from "../components/MatchModal";
+import BetHistoryMatchCard from "../components/BetHistoryMatchCard";
 
 function mapDbMatchToMatchCardShape(dbMatch) {
   if (!dbMatch) return null;
@@ -36,6 +37,7 @@ function BetHistory() {
     const fetchBets = async () => {
       try {
         setLoading(true);
+        await api.post("/settle-finished", {});
         const res = await api.get("/fetch-bets");
         setBets(res.data?.bets || []);
       } catch (err) {
@@ -60,7 +62,6 @@ function BetHistory() {
   return (
     <div className="p-4">
       <div className="flex flex-col min-h-screen bg-gray-100">
-        
         <div className="bg-white p-4 shadow rounded mb-4">
           <h1 className="text-xl font-bold">Bet History</h1>
 
@@ -104,69 +105,15 @@ function BetHistory() {
                 const matchForCard = mapDbMatchToMatchCardShape(bet.match);
 
                 return (
-                  <li
-                    key={bet.id}
-                    /*onClick={() =>
-                      matchForCard && setSelectedMatch(matchForCard)
-                    }*/
-                    className="bg-white shadow p-4 rounded cursor-pointer hover:bg-gray-100"
-                  >
-                    {/* Match header (using your existing component) */}
-                    {matchForCard ? (
-                      <MatchCard match={matchForCard} />
-                    ) : (
-                      <div className="text-sm text-gray-600">
-                        Match data not available (match_id: {bet.match_id})
-                      </div>
-                    )}
-
-                    {/* Bet details */}
-                    <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                      <div>
-                        <div className="text-gray-500">Selection</div>
-                        <div className="font-medium">{bet.user_selection}</div>
-                      </div>
-
-                      <div>
-                        <div className="text-gray-500">Stake</div>
-                        <div className="font-medium">
-                          ${Number(bet.amount).toFixed(2)}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-gray-500">Odds</div>
-                        <div className="font-medium">
-                          {Number(bet.odds).toFixed(2)}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-gray-500">
-                          {bet.is_settled ? "Payout" : "Potential"}
-                        </div>
-                        <div className="font-medium">
-                          {bet.is_settled
-                            ? `$${Number(bet.won_amount || 0).toFixed(2)}`
-                            : `$${(
-                                Number(bet.amount) * Number(bet.odds)
-                              ).toFixed(2)}`}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Status line */}
-                    <div className="mt-2 text-sm">
-                      {bet.is_settled ? (
-                        <span className="text-green-700 font-medium">
-                          Settled
-                        </span>
-                      ) : (
-                        <span className="text-yellow-700 font-medium">
-                          Open
-                        </span>
-                      )}
-                    </div>
+                  <li key={bet.id}>
+                    <BetHistoryMatchCard
+                      bet={bet}
+                      match={matchForCard}
+                      onClick={() => {
+                        // optional: show modal with match info
+                        // if (matchForCard) setSelectedMatch(matchForCard);
+                      }}
+                    />
                   </li>
                 );
               })}

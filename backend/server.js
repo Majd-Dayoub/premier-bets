@@ -16,7 +16,7 @@ app.use(cors());
 app.use(express.json());
 
 // Constants and Variables
-const STANDINGS_SYNC_COOLDOWN_MINUTES = 180; // 3 hours (tweak)
+const STANDINGS_SYNC_COOLDOWN_MINUTES = 0; // 3 hours (tweak)
 const COMPETITION_CODE = "PL";
 const SYNC_COOLDOWN_MINUTES = 360; // 6 hours (set to what you want)
 const MATCHES_LIMIT = 45;
@@ -65,20 +65,37 @@ app.get("/api/fetch-matches", async (req, res) => {
     const { data, error } = await supabase
       .from("matches")
       .select(`
-        match_id, utc_date,
-        home_team_id, home_team_name, home_team_tla, home_team_crest,
-        away_team_id, away_team_name, away_team_tla, away_team_crest
+        match_id,
+        utc_date,
+        status,
+        home_score,
+        away_score,
+        home_team_id,
+        home_team_name,
+        home_team_tla,
+        home_team_crest,
+        away_team_id,
+        away_team_name,
+        away_team_tla,
+        away_team_crest
       `)
       .gte("utc_date", from)
       .lte("utc_date", to)
       .order("utc_date", { ascending: true });
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
 
-    // Return EXACT same shape your frontend expects
+    // Return same shape frontend already uses + new fields
     const cleanedMatches = (data || []).map((m) => ({
       id: m.match_id,
       date: m.utc_date,
+      status: m.status, // ✅ added
+      score: {
+        home: m.home_score, // ✅ added
+        away: m.away_score, // ✅ added
+      },
       homeTeam: {
         id: m.home_team_id,
         name: m.home_team_name,
@@ -509,13 +526,12 @@ app.post("/api/sync-matches", async (req, res) => {
 });
 
 
-
 app.get("/api/fetch-bets", requireAuth, async (req, res) => {
   const userId = req.user.id;
 
   const { data: bets, error: betErr } = await supabase
     .from("bets")
-    .select("id, match_id, user_selection, user_team, amount, odds, is_settled, won_amount, created_at")
+    .select("id, match_id, user_selection, user_team, amount, odds, is_settled, won_amount, result, settled_at, created_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
@@ -545,6 +561,7 @@ app.get("/api/fetch-bets", requireAuth, async (req, res) => {
 
 
 
+
 app.post("/api/settle-match", async (req, res) => {
   try {
     const { matchId } = req.body;
@@ -563,33 +580,92 @@ app.post("/api/settle-match", async (req, res) => {
   }
 });
 
-
+// Used in bet history before fetching bets
 app.post("/api/settle-finished", async (req, res) => {
   try {
-    // Get matches that are finished
-    const { data: finished, error: matchErr } = await supabase
+    // Optional override from client, otherwise default window = yesterday -> now
+    const { from, to } = req.body || {};
+
+    const fromIso = from
+      ? dayjs(from).toISOString()
+      : dayjs().subtract(1, "day").toISOString();
+
+    const toIso = to ? dayjs(to).toISOString() : dayjs().toISOString();
+
+    // 1) Find FINISHED matches in window
+    const { data: finishedMatches, error: matchErr } = await supabase
       .from("matches")
-      .select("match_id")
-      .eq("status", "FINISHED");
+      .select("match_id, utc_date")
+      .eq("status", "FINISHED")
+      .gte("utc_date", fromIso)
+      .lte("utc_date", toIso);
 
-    if (matchErr) return res.status(500).json({ error: matchErr.message });
-
-    let totalSettled = 0;
-
-    for (const m of finished || []) {
-      const { data, error } = await supabase.rpc("settle_bets_for_match", {
-        p_match_id: Number(m.match_id),
-      });
-      if (error) continue;
-      totalSettled += Number(data || 0);
+    if (matchErr) {
+      return res.status(500).json({ error: matchErr.message });
     }
 
-    return res.json({ message: "Settlement run complete", totalSettled });
+    const matchIds = (finishedMatches || []).map((m) => String(m.match_id));
+
+    if (matchIds.length === 0) {
+      return res.json({
+        message: "No finished matches in time window",
+        from: fromIso,
+        to: toIso,
+        matchesConsidered: 0,
+        matchesWithOpenBets: 0,
+        totalSettled: 0,
+      });
+    }
+
+    // 2) Only settle matches that actually have open bets
+    const { data: openBetRows, error: betErr } = await supabase
+      .from("bets")
+      .select("match_id")
+      .in("match_id", matchIds)
+      .eq("is_settled", false);
+
+    if (betErr) {
+      return res.status(500).json({ error: betErr.message });
+    }
+
+    const matchesWithOpenBets = [
+      ...new Set((openBetRows || []).map((b) => String(b.match_id))),
+    ];
+
+    let totalSettled = 0;
+    const perMatch = [];
+
+    for (const mid of matchesWithOpenBets) {
+      const { data: settledCount, error: settleErr } = await supabase.rpc(
+        "settle_bets_for_match",
+        { p_match_id: Number(mid) }
+      );
+
+      if (settleErr) {
+        perMatch.push({ matchId: mid, settledCount: 0, error: settleErr.message });
+        continue;
+      }
+
+      const countNum = Number(settledCount || 0);
+      totalSettled += countNum;
+      perMatch.push({ matchId: mid, settledCount: countNum });
+    }
+
+    return res.json({
+      message: "Settlement run complete",
+      from: fromIso,
+      to: toIso,
+      matchesConsidered: matchIds.length,
+      matchesWithOpenBets: matchesWithOpenBets.length,
+      totalSettled,
+      perMatch,
+    });
   } catch (err) {
     console.error(err.message);
     return res.status(500).json({ error: "Failed to settle finished matches" });
   }
 });
+
 
 
 
