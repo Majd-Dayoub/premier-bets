@@ -13,7 +13,7 @@ function NavBar({ userStats }) {
   return (
     <nav className="bg-white shadow-md px-4 py-3 flex justify-between items-center">
       <div className="flex items-center gap-6">
-        <img src={logo} alt="Logo" className="h-10 w-auto" />
+        <img src={logo} alt="Logo" className="h-15 w-15" />
 
         <Link to="/home" className="text-gray-700 font-medium hover:text-blue-600">
           Home
