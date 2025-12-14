@@ -2,11 +2,11 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import supabase from "./supabaseClient.js";
 import axios from "axios";
 import { v4 as uuidv4 } from 'uuid'; //
 import dayjs from "dayjs";
-import { createClient } from "@supabase/supabase-js";
+import { supabasePublic, supabaseAdmin, supabaseForUser } from "./supabaseClients.js";
+
 
 // Configure dotenv
 dotenv.config();
@@ -22,28 +22,24 @@ const COMPETITION_CODE = "PL";
 const SYNC_COOLDOWN_MINUTES = 30; // 6 hours (set to what you want)
 const MATCHES_LIMIT = 45;
 
-// Regquest Authentication
 async function requireAuth(req, res, next) {
-  const auth = req.headers.authorization || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  try {
+    const auth = req.headers.authorization || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
 
-  if (!token) return res.status(401).json({ error: "Missing Authorization token" });
+    if (!token) return res.status(401).json({ error: "Missing Authorization token" });
 
-  const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data?.user) return res.status(401).json({ error: "Invalid or expired token" });
+    const { data, error } = await supabasePublic.auth.getUser(token);
+    if (error || !data?.user) return res.status(401).json({ error: "Invalid or expired token" });
 
-  req.user = data.user;
-  req.accessToken = token; // add this
-  next();
+    req.user = data.user;
+    req.sb = supabaseForUser(token); // ✅ RLS-aware client
+    next();
+  } catch (e) {
+    return res.status(500).json({ error: "Auth check failed" });
+  }
 }
 
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_API_URL,
-  process.env.SUPABASE_API_KEY,
-  {
-    auth: { persistSession: false },
-  }
-);
 
 
 
@@ -65,7 +61,7 @@ app.get("/api/fetch-matches", async (req, res) => {
     const from = dayjs().subtract(1, "day").toISOString();
     const to = dayjs().add(MATCHES_LIMIT, "day").toISOString();
 
-    const { data, error } = await supabase
+    const { data, error } = await supabasePublic
       .from("matches")
       .select(`
         match_id,
@@ -131,7 +127,7 @@ app.get("/api/fetch-standings", async (req, res) => {
     }
 
     // 1) Get match from DB (no external match call)
-    const { data: matchRow, error: matchErr } = await supabase
+    const { data: matchRow, error: matchErr } = await supabasePublic
       .from("matches")
       .select("match_id, home_team_id, away_team_id")
       .eq("match_id", matchId)
@@ -144,7 +140,7 @@ app.get("/api/fetch-standings", async (req, res) => {
     const awayTeamId = matchRow.away_team_id;
 
     // 2) Find latest standings snapshot time from meta
-    const { data: meta, error: metaErr } = await supabase
+    const { data: meta, error: metaErr } = await supabasePublic
       .from("standings_meta")
       .select("last_synced_at, season_year")
       .eq("competition_code", COMPETITION_CODE)
@@ -159,7 +155,7 @@ app.get("/api/fetch-standings", async (req, res) => {
     }
 
     // 3) Pull both teams from the latest snapshot
-    const { data: teams, error: standErr } = await supabase
+    const { data: teams, error: standErr } = await supabasePublic
       .from("standings_pl")
       .select(`
         team_id, team_name, crest,
@@ -253,12 +249,14 @@ function getSeasonStartYear() {
   return month >= 7 ? now.year() : now.year() - 1;
 }
 
+
+// Sync Standings Route
 app.post("/api/sync-standings", async (req, res) => {
   try {
     const seasonYear = getSeasonStartYear();
 
     // check meta
-    const { data: meta, error: metaErr } = await supabase
+    const { data: meta, error: metaErr } = await supabaseAdmin
       .from("standings_meta")
       .select("last_synced_at, season_year")
       .eq("competition_code", COMPETITION_CODE)
@@ -312,14 +310,14 @@ app.post("/api/sync-standings", async (req, res) => {
     })).filter(r => r.team_id != null);
 
     // Insert as a new snapshot (don’t overwrite old snapshots)
-    const { error: insErr } = await supabase
+    const { error: insErr } = await supabaseAdmin
       .from("standings_pl")
       .insert(rows);
 
     if (insErr) return res.status(500).json({ error: insErr.message });
 
     // Update meta pointer
-    const { error: upMetaErr } = await supabase
+    const { error: upMetaErr } = await supabaseAdmin
       .from("standings_meta")
       .upsert({
         competition_code: COMPETITION_CODE,
@@ -416,8 +414,22 @@ app.post("/api/place-bet", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "Amount must be greater than 0." });
   }
 
+  // Debug: verify the server can see the user row
+  const { data: u, error: uErr } = await req.sb
+    .from("users")
+    .select("id, email, balance")
+    .eq("id", userId)
+    .maybeSingle();
+
+  console.log("DEBUG userId:", userId);
+  console.log("DEBUG users row:", u, "err:", uErr);
+
+  if (uErr) return res.status(500).json({ error: "Users lookup failed: " + uErr.message });
+  if (!u) return res.status(400).json({ error: "User row not visible to server (RLS/policy or wrong DB)." });
+
+
   try {
-    const { data, error } = await supabase.rpc("place_bet_simple", {
+    const { data, error } = await req.sb.rpc("place_bet_simple", {
       p_user_id: userId,
       p_match_id: matchId,
       p_user_selection: user_selection,
@@ -443,7 +455,7 @@ app.get("/api/bet-history", requireAuth, async (req, res) => {
   const userId = req.user.id;
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await req.sb
       .from("bets")
       .select("id, match_id, user_selection, user_team, amount, odds, is_settled, won_amount, created_at")
       .eq("user_id", userId)
@@ -464,7 +476,7 @@ app.get("/api/bet-history", requireAuth, async (req, res) => {
 app.post("/api/sync-matches", async (req, res) => {
   try {
     // Check last sync time
-    const { data: lastRow, error: lastErr } = await supabase
+    const { data: lastRow, error: lastErr } = await supabaseAdmin
       .from("matches")
       .select("last_synced_at")
       .order("last_synced_at", { ascending: false })
@@ -515,7 +527,7 @@ app.post("/api/sync-matches", async (req, res) => {
       last_synced_at: new Date().toISOString(),
     }));
 
-    const { error: upsertErr } = await supabase
+    const { error: upsertErr } = await supabaseAdmin
       .from("matches")
       .upsert(rows, { onConflict: "match_id" });
 
@@ -532,22 +544,9 @@ app.post("/api/sync-matches", async (req, res) => {
 app.get("/api/fetch-bets", requireAuth, async (req, res) => {
   const userId = req.user.id;
 
-  const supabaseUser = createClient(
-    process.env.SUPABASE_API_URL,
-    process.env.SUPABASE_API_KEY,
-    {
-      global: {
-        headers: { Authorization: `Bearer ${req.accessToken}` },
-      },
-      auth: { persistSession: false },
-    }
-  );
-
-  const { data: bets, error: betErr } = await supabaseUser
+  const { data: bets, error: betErr } = await req.sb
     .from("bets")
-    .select(
-      "id, match_id, user_selection, user_team, amount, odds, is_settled, won_amount, result, settled_at, created_at"
-    )
+    .select("id, match_id, user_selection, user_team, amount, odds, is_settled, won_amount, result, settled_at, created_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
@@ -557,11 +556,9 @@ app.get("/api/fetch-bets", requireAuth, async (req, res) => {
 
   let matchesById = {};
   if (matchIds.length > 0) {
-    const { data: matches, error: matchErr } = await supabaseUser
+    const { data: matches, error: matchErr } = await supabasePublic
       .from("matches")
-      .select(
-        "match_id, utc_date, status, home_team_name, home_team_crest, away_team_name, away_team_crest, home_score, away_score"
-      )
+      .select("match_id, utc_date, status, home_team_name, home_team_crest, away_team_name, away_team_crest, home_score, away_score")
       .in("match_id", matchIds);
 
     if (matchErr) return res.status(500).json({ error: matchErr.message });
@@ -581,13 +578,12 @@ app.get("/api/fetch-bets", requireAuth, async (req, res) => {
 
 
 
-
 app.post("/api/settle-match", async (req, res) => {
   try {
     const { matchId } = req.body;
     if (!matchId) return res.status(400).json({ error: "Missing matchId" });
 
-    const { data, error } = await supabase.rpc("settle_bets_for_match", {
+    const { data, error } = await supabaseAdmin.rpc("settle_bets_for_match", {
       p_match_id: Number(matchId),
     });
 
@@ -603,25 +599,13 @@ app.post("/api/settle-match", async (req, res) => {
 // Used in bet history before fetching bets
 app.post("/api/settle-finished", requireAuth, async (req, res) => {
   try {
-    const supabaseUser = createClient(
-      process.env.SUPABASE_API_URL,
-      process.env.SUPABASE_API_KEY,
-      {
-        global: { headers: { Authorization: `Bearer ${req.accessToken}` } },
-        auth: { persistSession: false },
-      }
-    );
-
     const { from, to } = req.body || {};
 
-    const fromIso = from
-      ? dayjs(from).toISOString()
-      : dayjs().subtract(7, "day").toISOString(); // widened to avoid missing finished games
-
+    const fromIso = from ? dayjs(from).toISOString() : dayjs().subtract(7, "day").toISOString();
     const toIso = to ? dayjs(to).toISOString() : dayjs().toISOString();
 
-    // 1) finished matches in window
-    const { data: finishedMatches, error: matchErr } = await supabaseUser
+    // 1) finished matches in window (public)
+    const { data: finishedMatches, error: matchErr } = await supabasePublic
       .from("matches")
       .select("match_id, utc_date")
       .eq("status", "FINISHED")
@@ -631,11 +615,23 @@ app.post("/api/settle-finished", requireAuth, async (req, res) => {
     if (matchErr) return res.status(500).json({ error: matchErr.message });
 
     const matchIds = (finishedMatches || [])
-      .map((m) => Number(m.match_id))
+      .map(m => Number(m.match_id))
       .filter(Number.isFinite);
 
-    // 2) open bets for those matches (for THIS user only)
-    const { data: openBetRows, error: betErr } = await supabaseUser
+    if (matchIds.length === 0) {
+      return res.json({
+        message: "No finished matches in time window",
+        from: fromIso,
+        to: toIso,
+        finishedMatchesInWindow: 0,
+        matchesWithOpenBets: 0,
+        totalSettled: 0,
+        perMatch: [],
+      });
+    }
+
+    // 2) open bets for those matches (user-scoped)
+    const { data: openBetRows, error: betErr } = await req.sb
       .from("bets")
       .select("match_id")
       .in("match_id", matchIds)
@@ -644,35 +640,26 @@ app.post("/api/settle-finished", requireAuth, async (req, res) => {
     if (betErr) return res.status(500).json({ error: betErr.message });
 
     const matchesWithOpenBets = [
-      ...new Set((openBetRows || []).map((b) => Number(b.match_id)).filter(Number.isFinite)),
+      ...new Set((openBetRows || []).map(b => Number(b.match_id)).filter(Number.isFinite)),
     ];
 
     let totalSettled = 0;
     const perMatch = [];
 
     for (const mid of matchesWithOpenBets) {
-      const { data: settledCount, error: settleErr } = await supabaseUser.rpc(
+      const { data: settledCount, error: settleErr } = await req.sb.rpc(
         "settle_bets_for_match",
         { p_match_id: mid }
       );
 
       if (settleErr) {
-        perMatch.push({
-          matchId: mid,
-          ok: false,
-          error: settleErr.message,
-        });
+        perMatch.push({ matchId: mid, ok: false, error: settleErr.message });
         continue;
       }
 
       const countNum = Number(settledCount || 0);
       totalSettled += countNum;
-
-      perMatch.push({
-        matchId: mid,
-        ok: true,
-        settledCount: countNum,
-      });
+      perMatch.push({ matchId: mid, ok: true, settledCount: countNum });
     }
 
     return res.json({
@@ -689,6 +676,7 @@ app.post("/api/settle-finished", requireAuth, async (req, res) => {
     return res.status(500).json({ error: "Failed to settle finished matches" });
   }
 });
+
 
 
 

@@ -20,7 +20,7 @@ export default function DateSlider({ dateKeys, selectedDate, onSelectDate }) {
               key={dateKey}
               onClick={() => onSelectDate(dateKey)}
               className={[
-                "flex-shrink-0 rounded-xl border px-4 py-2 text-left",
+                "flex-shrink-0 rounded-xl border px-4 py-2 text-left cursor-pointer",
                 "min-w-[84px] transition",
                 isActive
                   ? "bg-black text-white border-black"
