@@ -6,10 +6,9 @@ import MatchModal from "../components/MatchModal";
 import DateSlider from "../components/DateSlider";
 import dayjs from "dayjs";
 
-function Home() {
+function Home({ setUserStats }) {
   const [matches, setMatches] = useState([]);
   const [selectedMatch, setSelectedMatch] = useState(null);
-  const [userStats, setUserStats] = useState(null);
 
   const groupedMatches = useMemo(() => {
     return matches.reduce((acc, match) => {
@@ -58,41 +57,7 @@ function Home() {
       }
     };
 
-    const fetchUserStats = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      console.log("session", session);
-
-      if (!session?.user?.id) {
-        console.warn("No session yet. User not logged in.");
-        return;
-      }
-
-      const userId = session.user.id;
-
-      const { data, error } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", userId)
-        .maybeSingle(); // important
-
-      if (error) {
-        console.error("Failed to fetch user stats", error);
-        return;
-      }
-
-      if (!data) {
-        console.warn("No users row found for this user. It must be created.");
-        return;
-      }
-
-      setUserStats(data);
-    };
-
     fetchMatches();
-    fetchUserStats();
   }, []);
 
   return (
@@ -145,7 +110,7 @@ function Home() {
             onClose={() => setSelectedMatch(null)}
             onBetPlaced={(newBalance) => {
               setUserStats((prev) => ({
-                ...prev,
+                ...(prev ?? {}),
                 balance: newBalance,
               }));
               setSelectedMatch(null);
