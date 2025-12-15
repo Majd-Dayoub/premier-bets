@@ -17,9 +17,9 @@ app.use(cors());
 app.use(express.json());
 
 // Constants and Variables
-const STANDINGS_SYNC_COOLDOWN_MINUTES = 30; // 3 hours (tweak)
+const STANDINGS_SYNC_COOLDOWN_MINUTES = 1; // 3 hours (tweak)
 const COMPETITION_CODE = "PL";
-const SYNC_COOLDOWN_MINUTES = 30; // 6 hours (set to what you want)
+const SYNC_COOLDOWN_MINUTES = 1; // 6 hours (set to what you want)
 const MATCHES_LIMIT = 45;
 
 async function requireAuth(req, res, next) {

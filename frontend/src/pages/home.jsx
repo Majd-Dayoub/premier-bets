@@ -47,7 +47,8 @@ function Home() {
   useEffect(() => {
     const fetchMatches = async () => {
       try {
-        await api.post("/sync-matches");
+        const respo = await api.post("/sync-matches");
+        console.log("Synced matches:", respo.data);
         await api.post("/sync-standings");
 
         const res = await api.get("/fetch-matches");

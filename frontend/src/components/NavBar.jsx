@@ -1,15 +1,8 @@
-import { Link, useNavigate } from "react-router-dom";
-import supabase from "../../supabaseClient";
+import { Link } from "react-router-dom";
+import Settings from "../components/Settings";
 import logo from "/public/logo.png";
 
 function NavBar({ userStats }) {
-  const navigate = useNavigate();
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate("/");
-  };
-
   return (
     <nav className="bg-white shadow-md px-4 py-3 flex justify-between items-center">
       <div className="flex items-center gap-6">
@@ -32,9 +25,7 @@ function NavBar({ userStats }) {
           </span>
         </div>
 
-        <button onClick={handleLogout} className="text-sm text-red-600 hover:underline">
-          Logout
-        </button>
+        <Settings />
       </div>
     </nav>
   );
